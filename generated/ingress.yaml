@@ -1,0 +1,59 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/rate-limit: '100'
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+  name: gameforge-ingress
+  namespace: gameforge-prod
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: app.${domain}
+    http:
+      paths:
+      - backend:
+          service:
+            name: frontend
+            port:
+              number: 3000
+        path: /
+        pathType: Prefix
+  - host: api.${domain}
+    http:
+      paths:
+      - backend:
+          service:
+            name: backend
+            port:
+              number: 8000
+        path: /
+        pathType: Prefix
+  - host: ai.${domain}
+    http:
+      paths:
+      - backend:
+          service:
+            name: ai-inference
+            port:
+              number: 8001
+        path: /
+        pathType: Prefix
+  - host: monitoring.${domain}
+    http:
+      paths:
+      - backend:
+          service:
+            name: grafana
+            port:
+              number: 3001
+        path: /
+        pathType: Prefix
+  tls:
+  - hosts:
+    - app.${domain}
+    - api.${domain}
+    - ai.${domain}
+    - monitoring.${domain}
+    secretName: gameforge-tls

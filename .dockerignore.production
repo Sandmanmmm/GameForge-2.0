@@ -1,0 +1,104 @@
+# GameForge Production .dockerignore
+# ========================================================================
+# Aggressive exclusions for minimal build context
+# ========================================================================
+
+# Model files (download at runtime instead)
+models/
+*.safetensors
+*.bin
+*.ckpt
+*.pth
+*.pt
+*.msgpack
+*.onnx
+*.tflite
+huggingface_cache/
+transformers_cache/
+.cache/
+models_cache/
+
+# Large directories
+stable-diffusion-xl-base-1.0/
+services/asset-gen/models/
+backup_local_changes/
+backup/
+backups/
+
+# Development files
+.git/
+.gitignore
+.vscode/
+.vs/
+*.code-workspace
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+env/
+venv/
+.venv/
+.env.local
+.env.development
+
+# Documentation and guides
+*.md
+!README.md
+*.txt
+!requirements-minimal.txt
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+.tox/
+.coverage
+.pytest_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# Test files
+test/
+tests/
+*_test.py
+test_*.py
+
+# Docker files (exclude other docker configs)
+docker-compose.*.yml
+!docker-compose.production-optimized.yml
+Dockerfile.*
+!Dockerfile.production-optimized
+
+# Large data files
+*.zip
+*.tar.gz
+*.tar.bz2
+*.7z
+*.iso
+*.dmg
+
+# IDE files
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

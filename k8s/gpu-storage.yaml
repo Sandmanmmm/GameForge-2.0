@@ -1,0 +1,155 @@
+# Persistent Volume Claims for GPU AI Workloads
+# Storage resources optimized for training, inference, and asset generation
+
+---
+# Model Storage - ReadWriteMany for sharing models across pods
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gameforge-model-storage
+  namespace: gameforge
+  labels:
+    app: gameforge
+    component: storage
+    storage-type: models
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 500Gi
+  storageClassName: fast-ssd
+  volumeMode: Filesystem
+
+---
+# Dataset Storage - ReadOnlyMany for sharing datasets across training pods
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gameforge-dataset-storage
+  namespace: gameforge
+  labels:
+    app: gameforge
+    component: storage
+    storage-type: datasets
+spec:
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 1Ti
+  storageClassName: standard-ssd
+  volumeMode: Filesystem
+
+---
+# Checkpoint Storage - ReadWriteMany for training checkpoints
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gameforge-checkpoint-storage
+  namespace: gameforge
+  labels:
+    app: gameforge
+    component: storage
+    storage-type: checkpoints
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 200Gi
+  storageClassName: fast-ssd
+  volumeMode: Filesystem
+
+---
+# Asset Storage - ReadWriteMany for generated assets
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gameforge-asset-storage
+  namespace: gameforge
+  labels:
+    app: gameforge
+    component: storage
+    storage-type: assets
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 300Gi
+  storageClassName: standard-ssd
+  volumeMode: Filesystem
+
+---
+# Logs Storage - ReadWriteMany for centralized logging
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gameforge-logs-storage
+  namespace: gameforge
+  labels:
+    app: gameforge
+    component: storage
+    storage-type: logs
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: standard-hdd
+  volumeMode: Filesystem
+
+---
+# Storage Classes for different performance requirements
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  labels:
+    storage-tier: premium
+provisioner: kubernetes.io/aws-ebs  # Change based on your cloud provider
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "250"
+  fsType: ext4
+  encrypted: "true"
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-ssd
+  labels:
+    storage-tier: standard
+provisioner: kubernetes.io/aws-ebs  # Change based on your cloud provider
+parameters:
+  type: gp3
+  iops: "1000"
+  throughput: "125"
+  fsType: ext4
+  encrypted: "true"
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-hdd
+  labels:
+    storage-tier: economy
+provisioner: kubernetes.io/aws-ebs  # Change based on your cloud provider
+parameters:
+  type: sc1
+  fsType: ext4
+  encrypted: "true"
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer

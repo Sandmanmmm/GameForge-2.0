@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/name: postgres
+  name: postgres
+  namespace: gameforge-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - env:
+        - name: POSTGRES_DB
+          value: gameforge
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          value: ${POSTGRES_PASSWORD}
+        image: postgres:16-alpine
+        name: postgres
+        ports:
+        - containerPort: 5432
+          name: postgres
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+          requests:
+            cpu: 200m
+            memory: 512Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+        volumeMounts:
+        - mountPath: /var/lib/postgresql/data
+          name: postgres-data
+      securityContext:
+        fsGroup: 1001
+        runAsGroup: 1001
+        runAsUser: 1001
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-postgres-data

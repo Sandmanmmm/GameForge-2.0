@@ -1,0 +1,19 @@
+# GameForge AI - Model Management Dependencies
+# For external storage and on-demand model downloading
+
+# Core model management
+boto3>=1.34.0              # AWS S3 integration
+minio>=7.2.0               # MinIO object storage client
+huggingface-hub>=0.19.0    # Hugging Face model downloading
+
+# Progress and utilities
+tqdm>=4.66.0               # Progress bars for downloads
+requests>=2.31.0           # HTTP requests
+PyYAML>=6.0.1              # YAML configuration parsing
+
+# Optional optimizations
+aioboto3>=12.3.0           # Async S3 operations (optional)
+aiofiles>=23.2.1           # Async file operations (optional)
+
+# Security and verification
+cryptography>=41.0.0       # File integrity verification

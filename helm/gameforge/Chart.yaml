@@ -1,0 +1,23 @@
+apiVersion: v2
+appVersion: 1.0.0
+dependencies:
+- name: postgresql
+  repository: https://charts.bitnami.com/bitnami
+  version: 11.9.13
+- name: redis
+  repository: https://charts.bitnami.com/bitnami
+  version: 17.3.7
+- name: prometheus
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 15.5.3
+description: GameForge AI - Complete production deployment
+keywords:
+- ai
+- gameforge
+- production
+maintainers:
+- email: ops@gameforge.com
+  name: GameForge Team
+name: gameforge
+type: application
+version: 1.0.0

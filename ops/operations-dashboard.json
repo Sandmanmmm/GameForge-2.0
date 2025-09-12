@@ -1,0 +1,88 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "GameForge AI - Operations Dashboard",
+    "description": "Comprehensive operations monitoring and alerting",
+    "tags": [
+      "gameforge",
+      "operations",
+      "production"
+    ],
+    "timezone": "browser",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Health Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"gameforge\"}",
+            "legendFormat": "Services Up"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Backup Status",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "backup_last_success_timestamp",
+            "legendFormat": "Last Backup"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Secret Rotation Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "secret_rotation_last_success_timestamp",
+            "legendFormat": "Last Rotation"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        }
+      },
+      {
+        "id": 4,
+        "title": "Disaster Recovery Test Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "dr_test_last_success_timestamp",
+            "legendFormat": "Last DR Test"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        }
+      }
+    ]
+  }
+}

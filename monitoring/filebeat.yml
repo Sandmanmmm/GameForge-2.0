@@ -1,0 +1,437 @@
+# ========================================================================
+# Enhanced Filebeat Configuration for GameForge Production
+# Comprehensive log aggregation with correlation IDs and intelligent parsing
+# ========================================================================
+
+# Global settings
+name: gameforge-filebeat
+tags: ["gameforge", "production", "ai-platform"]
+
+# ========================================================================
+# Input Configuration - Docker Container Logs
+# ========================================================================
+filebeat.inputs:
+- type: container
+  paths:
+    - '/var/lib/docker/containers/*/*.log'
+  
+  # JSON log parsing with error handling
+  json.keys_under_root: true
+  json.add_error_key: true
+  json.message_key: log
+  json.overwrite_keys: true
+  
+  # Enhanced container metadata
+  processors:
+    - add_docker_metadata:
+        host: "unix:///var/run/docker.sock"
+        cache.ttl: 5m
+        
+    # Decode nested JSON in log messages
+    - decode_json_fields:
+        fields: ["log", "message"]
+        target: ""
+        overwrite_keys: true
+        max_depth: 3
+        
+    # Extract correlation IDs for request tracing
+    - script:
+        lang: javascript
+        id: correlation_extractor
+        source: >
+          function process(event) {
+            var message = event.Get("message") || event.Get("log") || "";
+            
+            // Extract request ID patterns
+            var patterns = [
+              /request[_-]?id[:\s]*([a-f0-9-]{8,})/i,
+              /correlation[_-]?id[:\s]*([a-f0-9-]{8,})/i,
+              /x[_-]request[_-]id[:\s]*([a-f0-9-]{8,})/i
+            ];
+            
+            for (var i = 0; i < patterns.length; i++) {
+              var match = message.match(patterns[i]);
+              if (match) {
+                event.Put("correlation_id", match[1]);
+                break;
+              }
+            }
+            
+            // Extract trace ID for distributed tracing
+            var traceMatch = message.match(/trace[_-]?id[:\s]*([a-f0-9-]{8,})/i);
+            if (traceMatch) {
+              event.Put("trace_id", traceMatch[1]);
+            }
+            
+            // Extract user ID
+            var userMatch = message.match(/user[_-]?id[:\s]*([a-zA-Z0-9-]+)/i);
+            if (userMatch) {
+              event.Put("user_id", userMatch[1]);
+            }
+            
+            // Extract session ID
+            var sessionMatch = message.match(/session[_-]?id[:\s]*([a-zA-Z0-9-]+)/i);
+            if (sessionMatch) {
+              event.Put("session_id", sessionMatch[1]);
+            }
+          }
+    
+    # Intelligent log classification
+    - script:
+        lang: javascript
+        id: log_classifier
+        source: >
+          function process(event) {
+            var message = (event.Get("message") || event.Get("log") || "").toLowerCase();
+            var level = (event.Get("level") || "").toLowerCase();
+            var tags = [];
+            
+            // Normalize and classify log levels
+            if (level === "error" || level === "err" || level === "fatal" || 
+                message.match(/\b(error|err|exception|fail|fatal|crash)\b/)) {
+              event.Put("log.level", "error");
+              tags.push("error", "alert");
+            } else if (level === "warn" || level === "warning" || 
+                       message.match(/\b(warn|warning)\b/)) {
+              event.Put("log.level", "warning");
+              tags.push("warning");
+            } else if (level === "info" || level === "information" || 
+                       message.match(/\b(info|information)\b/)) {
+              event.Put("log.level", "info");
+            } else if (level === "debug" || level === "trace" || 
+                       message.match(/\b(debug|trace)\b/)) {
+              event.Put("log.level", "debug");
+            }
+            
+            // Event type classification
+            if (message.match(/\b(security|auth|login|logout|unauthorized|forbidden|intrusion|attack|breach)\b/)) {
+              tags.push("security");
+            }
+            
+            if (message.match(/\b(performance|slow|timeout|latency|duration|bottleneck)\b/)) {
+              tags.push("performance");
+            }
+            
+            if (message.match(/\b(inference|model|gpu|cuda|tensor|ai|ml|prediction)\b/)) {
+              tags.push("ai-ml");
+            }
+            
+            if (message.match(/\b(database|sql|query|transaction|connection|db)\b/)) {
+              tags.push("database");
+            }
+            
+            if (message.match(/\b(api|http|rest|request|response|endpoint)\b/)) {
+              tags.push("api");
+            }
+            
+            if (message.match(/\b(memory|cpu|disk|network|resource|usage)\b/)) {
+              tags.push("resource");
+            }
+            
+            // Set tags
+            if (tags.length > 0) {
+              event.Put("tags", tags);
+            }
+            
+            // Extract numeric metrics
+            var durationMatch = message.match(/duration[:\s]*([0-9.]+)\s*(ms|seconds?|s)/i);
+            if (durationMatch) {
+              var duration = parseFloat(durationMatch[1]);
+              var unit = durationMatch[2].toLowerCase();
+              if (unit === "s" || unit.startsWith("second")) {
+                duration *= 1000; // Convert to milliseconds
+              }
+              event.Put("duration_ms", duration);
+            }
+            
+            var statusMatch = message.match(/status[:\s]*([0-9]{3})/i);
+            if (statusMatch) {
+              event.Put("http.status_code", parseInt(statusMatch[1]));
+            }
+          }
+    
+    # Add environment metadata
+    - add_fields:
+        target: gameforge
+        fields:
+          environment: production
+          deployment: vastai
+          cluster: gameforge-ai
+          version: "1.0.0"
+  
+  # Enhanced filtering
+  include_lines: ['^{.*}$', '.*']
+  exclude_lines: ['^$', '^\s*$', '^#']
+  exclude_files: ['\.gz$', '\.tmp$']
+  
+  # Multiline pattern for stack traces and continued logs
+  multiline.pattern: '^\s+at\s|^\s+\.\.\.\s|^\s*Caused by:|^\s+File\s|^\s*Traceback'
+  multiline.negate: false
+  multiline.match: after
+  multiline.max_lines: 500
+
+# ========================================================================
+# Direct Application Logs
+# ========================================================================
+- type: log
+  paths:
+    - "/app/logs/*.log"
+    - "/app/logs/*.json"
+    - "/var/log/gameforge/*.log"
+  
+  json.keys_under_root: true
+  json.add_error_key: true
+  
+  fields:
+    service.name: gameforge-app
+    log.origin: application
+  
+  processors:
+    - add_fields:
+        target: service
+        fields:
+          name: gameforge-app
+          version: "1.0.0"
+          environment: production
+
+# ========================================================================
+# Nginx Access Logs (JSON format)
+# ========================================================================
+- type: log
+  paths:
+    - "/var/log/nginx/access.log"
+  
+  json.keys_under_root: true
+  json.add_error_key: true
+  
+  fields:
+    service.name: nginx
+    log.origin: access
+  
+  processors:
+    - script:
+        lang: javascript
+        id: nginx_access_classifier
+        source: >
+          function process(event) {
+            var status = parseInt(event.Get("status") || "0");
+            var requestTime = parseFloat(event.Get("request_time") || "0");
+            var tags = [];
+            
+            // HTTP status classification
+            if (status >= 200 && status < 300) {
+              event.Put("http.status_class", "success");
+            } else if (status >= 300 && status < 400) {
+              event.Put("http.status_class", "redirect");
+            } else if (status >= 400 && status < 500) {
+              event.Put("http.status_class", "client_error");
+              tags.push("http_error");
+              if (status === 401 || status === 403) tags.push("security");
+            } else if (status >= 500) {
+              event.Put("http.status_class", "server_error");
+              tags.push("http_error", "alert");
+            }
+            
+            // Performance classification
+            if (requestTime > 5.0) {
+              tags.push("slow_request");
+            } else if (requestTime > 1.0) {
+              tags.push("moderate_request");
+            }
+            
+            if (tags.length > 0) {
+              event.Put("tags", tags);
+            }
+          }
+
+# ========================================================================
+# Nginx Error Logs
+# ========================================================================
+- type: log
+  paths:
+    - "/var/log/nginx/error.log"
+  
+  fields:
+    service.name: nginx
+    log.origin: error
+  
+  processors:
+    - dissect:
+        tokenizer: '%{timestamp} [%{level}] %{pid}#%{tid}: %{message}'
+        field: "message"
+        target_prefix: "nginx"
+
+# ========================================================================
+# PostgreSQL Logs
+# ========================================================================
+- type: log
+  paths:
+    - "/var/log/postgresql/*.log"
+    - "/var/log/postgresql/*.json"
+  
+  fields:
+    service.name: postgres
+    log.origin: database
+  
+  processors:
+    - script:
+        lang: javascript
+        id: postgres_classifier
+        source: >
+          function process(event) {
+            var message = event.Get("message") || "";
+            var tags = [];
+            
+            // Extract query duration
+            var durationMatch = message.match(/duration:\s*([0-9.]+)\s*ms/);
+            if (durationMatch) {
+              var duration = parseFloat(durationMatch[1]);
+              event.Put("database.duration_ms", duration);
+              
+              if (duration > 10000) {
+                tags.push("very_slow_query");
+              } else if (duration > 1000) {
+                tags.push("slow_query");
+              }
+            }
+            
+            // Classify database events
+            if (message.match(/connection|connect|disconnect/i)) {
+              tags.push("connection");
+            }
+            
+            if (message.match(/deadlock|lock|timeout/i)) {
+              tags.push("locking");
+            }
+            
+            if (message.match(/error|exception|fail/i)) {
+              tags.push("database_error");
+            }
+            
+            if (tags.length > 0) {
+              event.Put("tags", tags);
+            }
+          }
+
+# ========================================================================
+# Redis Logs
+# ========================================================================
+- type: log
+  paths:
+    - "/var/log/redis/*.log"
+  
+  fields:
+    service.name: redis
+    log.origin: cache
+
+# ========================================================================
+# Global Processors
+# ========================================================================
+processors:
+  # Drop logs from excluded containers
+  - drop_event:
+      when:
+        not:
+          or:
+            - contains:
+                container.image.name: "gameforge"
+            - contains:
+                container.image.name: "nginx"
+            - contains:
+                container.image.name: "postgres"
+            - contains:
+                container.image.name: "redis"
+            - contains:
+                container.image.name: "minio"
+            - contains:
+                container.image.name: "elasticsearch"
+            - contains:
+                container.image.name: "filebeat"
+
+  # Add timestamp if missing
+  - timestamp:
+      field: "@timestamp"
+      layouts:
+        - '2006-01-02T15:04:05.000Z'
+        - '2006-01-02T15:04:05Z'
+        - '2006-01-02 15:04:05'
+      test:
+        - '2023-12-07T14:30:45.123Z'
+
+  # Add hostname and IP
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+      cache.ttl: 5m
+      
+  # Clean up fields
+  - drop_fields:
+      fields: ["agent", "ecs", "input", "log.file", "log.offset"]
+      ignore_missing: true
+
+# ========================================================================
+# Output Configuration
+# ========================================================================
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  username: "elastic"
+  password: "${ELASTIC_PASSWORD}"
+  
+  # Index configuration with lifecycle management
+  index: "gameforge-logs-%{+yyyy.MM.dd}"
+  pipeline: "gameforge-logs-pipeline"
+  
+  # Template configuration
+  template.name: "gameforge-logs"
+  template.pattern: "gameforge-logs-*"
+  template.settings:
+    index.number_of_shards: 2
+    index.number_of_replicas: 1
+    index.lifecycle.name: "gameforge-logs-policy"
+    index.lifecycle.rollover_alias: "gameforge-logs"
+    index.refresh_interval: "5s"
+    index.max_result_window: 100000
+  
+  # Bulk settings for performance
+  bulk_max_size: 3200
+  worker: 2
+  compression_level: 1
+  escape_html: false
+
+# ========================================================================
+# Logging Configuration
+# ========================================================================
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644
+  rotateeverybytes: 10485760 # 10MB
+
+# ========================================================================
+# Monitoring and Health
+# ========================================================================
+monitoring.enabled: true
+monitoring.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  username: "elastic"
+  password: "${ELASTIC_PASSWORD}"
+  
+# Internal HTTP server for health checks
+http.enabled: true
+http.host: 0.0.0.0
+http.port: 5066
+
+# ========================================================================
+# Performance Tuning
+# ========================================================================
+queue.mem:
+  events: 8192
+  flush.min_events: 1024
+  flush.timeout: 5s
+
+# Registry file for state persistence
+filebeat.registry.path: ${path.data}/registry
+filebeat.registry.file_permissions: 0600
+filebeat.registry.flush: 1s

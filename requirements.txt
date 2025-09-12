@@ -48,6 +48,43 @@ structlog==23.2.0
 cryptography==41.0.7
 PyJWT==2.8.0
 passlib==1.7.4
+
+# ====================================================================
+# EXTERNAL STORAGE & DATABASE DEPENDENCIES
+# ====================================================================
+
+# Database
+asyncpg==0.29.0        # PostgreSQL async driver
+psycopg2-binary==2.9.9 # PostgreSQL sync driver
+alembic==1.12.1        # Database migrations
+
+# Cloud Storage Providers
+boto3==1.34.0           # AWS S3
+botocore==1.34.0
+azure-storage-blob==12.19.0  # Azure Blob Storage
+google-cloud-storage==2.10.0  # Google Cloud Storage
+
+# MinIO Object Storage
+minio==7.2.0
+
+# Vault Integration
+hvac==2.0.0  # HashiCorp Vault client
+
+# ====================================================================
+# OBSERVABILITY & JSON LOGGING
+# ====================================================================
+
+# JSON Logging
+python-json-logger==2.0.7
+
+# OpenTelemetry
+opentelemetry-api==1.21.0
+opentelemetry-sdk==1.21.0
+opentelemetry-instrumentation-fastapi==0.42b0
+opentelemetry-exporter-prometheus==1.12.0rc1
+
+# Metrics
+prometheus-fastapi-instrumentator==6.1.0
 bcrypt==4.1.2
 
 # Configuration

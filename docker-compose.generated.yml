@@ -1,0 +1,188 @@
+version: '3.8'
+services:
+  frontend:
+    image: ${registry}/frontend-hardened
+    container_name: gameforge_frontend
+    restart: unless-stopped
+    networks:
+    - gameforge
+    ports:
+    - 3000:3000
+    environment:
+      NODE_ENV: production
+      API_URL: http://backend:8000
+    volumes: []
+    tmpfs:
+    - /tmp
+    healthcheck:
+      test: curl -f http://localhost:3000/health || exit 1
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '500'
+          memory: 512Mi
+        reservations:
+          cpus: '100'
+          memory: 128Mi
+      replicas: 3
+  backend:
+    image: ${registry}/backend-hardened
+    container_name: gameforge_backend
+    restart: unless-stopped
+    networks:
+    - gameforge
+    ports:
+    - 8000:8000
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/gameforge
+      REDIS_URL: redis://redis:6379/0
+    volumes: []
+    tmpfs:
+    - /tmp
+    - /app/logs
+    healthcheck:
+      test: curl -f http://localhost:8000/health || exit 1
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '1000'
+          memory: 1Gi
+        reservations:
+          cpus: '200'
+          memory: 256Mi
+      replicas: 2
+  ai-inference:
+    image: ${registry}/ai-inference-hardened
+    container_name: gameforge_ai-inference
+    restart: unless-stopped
+    networks:
+    - gameforge
+    ports:
+    - 8001:8001
+    environment:
+      CUDA_VISIBLE_DEVICES: '0'
+      MODEL_PATH: /models
+    volumes:
+    - ai-inference_models:/models
+    tmpfs:
+    - /tmp
+    healthcheck:
+      test: curl -f http://localhost:8001/health || exit 1
+      interval: 60s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2000'
+          memory: 8Gi
+        reservations:
+          cpus: '500'
+          memory: 2Gi
+          devices:
+          - driver: nvidia
+            count: 1
+            capabilities:
+            - gpu
+  postgres:
+    image: postgres:16-alpine
+    container_name: gameforge_postgres
+    restart: unless-stopped
+    networks:
+    - gameforge
+    ports:
+    - 5432:5432
+    environment:
+      POSTGRES_DB: gameforge
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+    - postgres_postgres-data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: '1000'
+          memory: 2Gi
+        reservations:
+          cpus: '200'
+          memory: 512Mi
+  redis:
+    image: redis:7-alpine
+    container_name: gameforge_redis
+    restart: unless-stopped
+    networks:
+    - gameforge
+    ports:
+    - 6379:6379
+    volumes:
+    - redis_redis-data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '500'
+          memory: 512Mi
+        reservations:
+          cpus: '100'
+          memory: 128Mi
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: gameforge_prometheus
+    restart: unless-stopped
+    networks:
+    - gameforge
+    ports:
+    - 9090:9090
+    volumes:
+    - prometheus_prometheus-data:/prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '500'
+          memory: 1Gi
+        reservations:
+          cpus: '100'
+          memory: 256Mi
+  grafana:
+    image: grafana/grafana:latest-alpine
+    container_name: gameforge_grafana
+    restart: unless-stopped
+    networks:
+    - gameforge
+    ports:
+    - 3001:3000
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+    volumes:
+    - grafana_grafana-data:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          cpus: '500'
+          memory: 512Mi
+        reservations:
+          cpus: '100'
+          memory: 128Mi
+volumes:
+  ai-inference_models:
+    driver: local
+  postgres_postgres-data:
+    driver: local
+  redis_redis-data:
+    driver: local
+  prometheus_prometheus-data:
+    driver: local
+  grafana_grafana-data:
+    driver: local
+networks:
+  gameforge:
+    driver: bridge

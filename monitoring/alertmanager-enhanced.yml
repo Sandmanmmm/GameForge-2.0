@@ -1,0 +1,271 @@
+# ========================================================================
+# Enhanced AlertManager Configuration
+# Advanced routing, grouping, and notification templates
+# ========================================================================
+
+global:
+  smtp_smarthost: '${SMTP_HOST:localhost:587}'
+  smtp_from: 'alerts@gameforge.ai'
+  smtp_auth_username: '${SMTP_USER}'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+  resolve_timeout: 5m
+
+# ========================================================================
+# Notification Templates
+# ========================================================================
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# ========================================================================
+# Route Configuration
+# ========================================================================
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+  
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 0s
+      repeat_interval: 5m
+      routes:
+        - match:
+            alertname: GameForgeServiceDown
+          receiver: 'service-down-alerts'
+        - match:
+            alertname: GPUMemoryExhaustion
+          receiver: 'gpu-alerts'
+        - match:
+            alertname: SecurityIncident
+          receiver: 'security-alerts'
+
+    # Warning alerts - grouped notifications
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_interval: 5m
+      repeat_interval: 2h
+
+    # Performance alerts
+    - match:
+        category: performance
+      receiver: 'performance-alerts'
+      group_interval: 15m
+      repeat_interval: 4h
+
+    # Infrastructure alerts
+    - match:
+        category: infrastructure
+      receiver: 'infrastructure-alerts'
+      group_interval: 10m
+      repeat_interval: 1h
+
+    # Security alerts - immediate and escalated
+    - match:
+        category: security
+      receiver: 'security-alerts'
+      group_wait: 0s
+      repeat_interval: 15m
+      continue: true
+
+    # Development environment (suppressed during maintenance)
+    - match:
+        environment: development
+      receiver: 'dev-alerts'
+      group_interval: 1h
+      repeat_interval: 24h
+
+# ========================================================================
+# Receivers Configuration
+# ========================================================================
+receivers:
+  # Default receiver
+  - name: 'default-receiver'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-alerts'
+        title: 'GameForge Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        color: 'warning'
+        send_resolved: true
+
+  # Critical alerts - multiple channels
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'ops-team@gameforge.ai'
+        subject: 'CRITICAL: GameForge Alert - {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Severity: {{ .Labels.severity }}
+          Instance: {{ .Labels.instance }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-critical'
+        title: '🚨 CRITICAL ALERT'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Instance:* {{ .Labels.instance }}
+          *Started:* {{ .StartsAt }}
+          {{ end }}
+        color: 'danger'
+        send_resolved: true
+    webhook_configs:
+      - url: '${PAGERDUTY_WEBHOOK_URL}'
+        send_resolved: true
+
+  # Service down alerts
+  - name: 'service-down-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-ops'
+        title: '⛔ Service Down Alert'
+        text: |
+          {{ range .Alerts }}
+          *Service:* {{ .Labels.service }}
+          *Instance:* {{ .Labels.instance }}
+          *Status:* Service is DOWN
+          *Duration:* {{ .StartsAt }}
+          {{ end }}
+        color: 'danger'
+        send_resolved: true
+
+  # GPU-specific alerts
+  - name: 'gpu-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-gpu'
+        title: '🖥️ GPU Alert'
+        text: |
+          {{ range .Alerts }}
+          *GPU Issue:* {{ .Annotations.summary }}
+          *Details:* {{ .Annotations.description }}
+          *GPU:* {{ .Labels.gpu_id }}
+          *Memory Usage:* {{ .Labels.memory_usage }}%
+          {{ end }}
+        color: 'danger'
+        send_resolved: true
+
+  # Security alerts
+  - name: 'security-alerts'
+    email_configs:
+      - to: 'security-team@gameforge.ai'
+        subject: '🔒 SECURITY ALERT: {{ .GroupLabels.alertname }}'
+        body: |
+          SECURITY INCIDENT DETECTED
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Severity: {{ .Labels.severity }}
+          Source: {{ .Labels.instance }}
+          Time: {{ .StartsAt }}
+          
+          IMMEDIATE ACTION REQUIRED
+          {{ end }}
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-security'
+        title: '🔒 SECURITY ALERT'
+        text: |
+          *SECURITY INCIDENT DETECTED*
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Source:* {{ .Labels.instance }}
+          *Time:* {{ .StartsAt }}
+          {{ end }}
+        color: 'danger'
+        send_resolved: true
+
+  # Warning alerts
+  - name: 'warning-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-warnings'
+        title: '⚠️ Warning Alert'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Instance:* {{ .Labels.instance }}
+          *Started:* {{ .StartsAt }}
+          {{ end }}
+        color: 'warning'
+        send_resolved: true
+
+  # Performance alerts
+  - name: 'performance-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-performance'
+        title: '📊 Performance Alert'
+        text: |
+          {{ range .Alerts }}
+          *Performance Issue:* {{ .Annotations.summary }}
+          *Metric:* {{ .Labels.metric_name }}
+          *Value:* {{ .Labels.metric_value }}
+          *Threshold:* {{ .Labels.threshold }}
+          {{ end }}
+        color: 'warning'
+        send_resolved: true
+
+  # Infrastructure alerts
+  - name: 'infrastructure-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-infrastructure'
+        title: '🏗️ Infrastructure Alert'
+        text: |
+          {{ range .Alerts }}
+          *Infrastructure Issue:* {{ .Annotations.summary }}
+          *Component:* {{ .Labels.component }}
+          *Instance:* {{ .Labels.instance }}
+          {{ end }}
+        color: 'warning'
+        send_resolved: true
+
+  # Development alerts (reduced noise)
+  - name: 'dev-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-dev'
+        title: 'Development Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        color: 'good'
+        send_resolved: false
+
+# ========================================================================
+# Inhibit Rules
+# ========================================================================
+inhibit_rules:
+  # Inhibit warning alerts when critical alerts are firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+
+  # Inhibit specific combinations
+  - source_match:
+      alertname: 'GameForgeServiceDown'
+    target_match_re:
+      alertname: 'GameForge.*'
+    equal: ['instance']
+
+  # Inhibit during maintenance windows
+  - source_match:
+      maintenance: 'true'
+    target_match_re:
+      alertname: '.*'
+    equal: ['instance']

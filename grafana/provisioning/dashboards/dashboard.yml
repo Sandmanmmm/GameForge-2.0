@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+- allowUiUpdates: true
+  disableDeletion: false
+  folder: ''
+  name: gameforge-dashboards
+  options:
+    path: /etc/grafana/provisioning/dashboards
+  orgId: 1
+  type: file
+  updateIntervalSeconds: 10

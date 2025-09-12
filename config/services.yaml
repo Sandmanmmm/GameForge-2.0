@@ -1,0 +1,295 @@
+# GameForge Service Definitions - Single Source of Truth
+# This YAML file defines all services once and generates both Docker Compose and K8s manifests
+
+# Global Configuration
+global:
+  project: gameforge
+  version: "1.0.0"
+  namespace: gameforge-prod
+  domain: gameforge.ai
+  
+  # Hardened Image Registry
+  registry: ghcr.io/sandmanmmm/gameforge-hardened
+  
+  # Security Defaults
+  security:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+
+# Service Definitions (Single Source of Truth)
+services:
+  # Frontend Service
+  frontend:
+    image: "${registry}/frontend-hardened"
+    type: web
+    replicas: 3
+    ports:
+      - name: http
+        port: 3000
+        targetPort: 3000
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    healthCheck:
+      path: "/health"
+      port: 3000
+      initialDelaySeconds: 10
+      periodSeconds: 30
+    environment:
+      NODE_ENV: "production"
+      API_URL: "http://backend:8000"
+    volumes:
+      - name: tmp
+        mountPath: "/tmp"
+        type: emptyDir
+    scaling:
+      minReplicas: 2
+      maxReplicas: 10
+      targetCPU: 70
+
+  # Backend API Service  
+  backend:
+    image: "${registry}/backend-hardened"
+    type: api
+    replicas: 2
+    ports:
+      - name: http
+        port: 8000
+        targetPort: 8000
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+    healthCheck:
+      path: "/health"
+      port: 8000
+      initialDelaySeconds: 15
+      periodSeconds: 30
+    environment:
+      FLASK_ENV: "production"
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/gameforge"
+      REDIS_URL: "redis://redis:6379/0"
+    secrets:
+      - name: database-credentials
+        env: POSTGRES_PASSWORD
+      - name: jwt-secret
+        env: JWT_SECRET_KEY
+    volumes:
+      - name: tmp
+        mountPath: "/tmp"
+        type: emptyDir
+      - name: logs
+        mountPath: "/app/logs"
+        type: emptyDir
+    scaling:
+      minReplicas: 2
+      maxReplicas: 8
+      targetCPU: 80
+
+  # AI Inference Service (GPU)
+  ai-inference:
+    image: "${registry}/ai-inference-hardened"
+    type: gpu-service
+    replicas: 1
+    ports:
+      - name: http
+        port: 8001
+        targetPort: 8001
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "2Gi"
+        nvidia.com/gpu: 1
+      limits:
+        cpu: "2000m"
+        memory: "8Gi"
+        nvidia.com/gpu: 1
+    healthCheck:
+      path: "/health"
+      port: 8001
+      initialDelaySeconds: 30
+      periodSeconds: 60
+    environment:
+      CUDA_VISIBLE_DEVICES: "0"
+      MODEL_PATH: "/models"
+    volumes:
+      - name: models
+        mountPath: "/models"
+        type: persistentVolume
+        size: "50Gi"
+        storageClass: "fast-ssd"
+      - name: tmp
+        mountPath: "/tmp"
+        type: emptyDir
+    nodeSelector:
+      gpu-type: "rtx4090"
+    tolerations:
+      - key: "gpu-node"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+  # Database Service
+  postgres:
+    image: "postgres:16-alpine"
+    type: database
+    replicas: 1
+    ports:
+      - name: postgres
+        port: 5432
+        targetPort: 5432
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+    environment:
+      POSTGRES_DB: "gameforge"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    secrets:
+      - name: database-credentials
+        env: POSTGRES_PASSWORD
+    volumes:
+      - name: postgres-data
+        mountPath: "/var/lib/postgresql/data"
+        type: persistentVolume
+        size: "20Gi"
+        storageClass: "standard"
+    healthCheck:
+      exec: ["pg_isready", "-U", "postgres"]
+      initialDelaySeconds: 30
+      periodSeconds: 10
+
+  # Redis Cache
+  redis:
+    image: "redis:7-alpine"
+    type: cache
+    replicas: 1
+    ports:
+      - name: redis
+        port: 6379
+        targetPort: 6379
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    healthCheck:
+      exec: ["redis-cli", "ping"]
+      initialDelaySeconds: 5
+      periodSeconds: 10
+    volumes:
+      - name: redis-data
+        mountPath: "/data"
+        type: persistentVolume
+        size: "5Gi"
+        storageClass: "standard"
+
+  # Monitoring Services
+  prometheus:
+    image: "prom/prometheus:latest"
+    type: monitoring
+    replicas: 1
+    ports:
+      - name: http
+        port: 9090
+        targetPort: 9090
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+    volumes:
+      - name: prometheus-data
+        mountPath: "/prometheus"
+        type: persistentVolume
+        size: "10Gi"
+        storageClass: "standard"
+      - name: config
+        mountPath: "/etc/prometheus"
+        type: configMap
+
+  grafana:
+    image: "grafana/grafana:latest-alpine"
+    type: monitoring
+    replicas: 1
+    ports:
+      - name: http
+        port: 3001
+        targetPort: 3000
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD}"
+    secrets:
+      - name: grafana-credentials
+        env: GRAFANA_PASSWORD
+    volumes:
+      - name: grafana-data
+        mountPath: "/var/lib/grafana"
+        type: persistentVolume
+        size: "5Gi"
+        storageClass: "standard"
+
+# Network Configuration
+networking:
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      nginx.ingress.kubernetes.io/rate-limit: "100"
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    tls:
+      secretName: "gameforge-tls"
+    rules:
+      - host: "app.${domain}"
+        service: frontend
+        port: 3000
+      - host: "api.${domain}"
+        service: backend
+        port: 8000
+      - host: "ai.${domain}"
+        service: ai-inference
+        port: 8001
+      - host: "monitoring.${domain}"
+        service: grafana
+        port: 3001
+
+# Storage Configuration
+storage:
+  classes:
+    - name: "fast-ssd"
+      provisioner: "kubernetes.io/aws-ebs"
+      parameters:
+        type: "gp3"
+        fsType: "ext4"
+        encrypted: "true"
+    - name: "standard"
+      provisioner: "kubernetes.io/aws-ebs"
+      parameters:
+        type: "gp2"
+        fsType: "ext4"
+        encrypted: "true"

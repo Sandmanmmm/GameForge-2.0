@@ -55,9 +55,38 @@ spec:
             cpu: 1000m
             memory: 4Gi
             nvidia.com/gpu: '1'
+      
+      # Priority class for GameForge API
+      priorityClassName: medium-priority-inference
+      
+      # GPU node affinity
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: accelerator
+                operator: In
+                values: ["nvidia-tesla", "nvidia-rtx"]
+              - key: workload-type
+                operator: In
+                values: ["inference", "mixed"]
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: gpu-memory
+                operator: In
+                values: ["medium", "high"]
+      
       nodeSelector:
-        accelerator: nvidia-tesla-gpu
+        accelerator: nvidia
+      
       tolerations:
       - effect: NoSchedule
         key: nvidia.com/gpu
         operator: Exists
+      - effect: NoSchedule
+        key: accelerator
+        operator: Equal
+        value: nvidia

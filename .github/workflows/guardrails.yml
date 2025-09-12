@@ -1,0 +1,340 @@
+name: Production Guardrails
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # ========================================================================
+  # SECURITY GUARDRAILS - Block sensitive files
+  # ========================================================================
+  security-guardrails:
+    name: Security File Guardrails
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for comprehensive scanning
+
+    - name: Block .env files in repository
+      run: |
+        echo "🔍 Scanning for .env files that shouldn't be in repository..."
+        
+        # Find any .env files (excluding .example and .template)
+        ENV_FILES=$(find . -name "*.env*" -not -name "*.example" -not -name "*.template" -not -path "./node_modules/*" -not -path "./.git/*" -not -path "./.*env*" | grep -E '\.(env|ENV)($|\.)' || true)
+        
+        if [ ! -z "$ENV_FILES" ]; then
+          echo "❌ SECURITY VIOLATION: .env files found in repository!"
+          echo "The following .env files must be removed:"
+          echo "$ENV_FILES"
+          echo ""
+          echo "💡 Solution: Remove these files and add secrets to:"
+          echo "  - GitHub Secrets for CI/CD"
+          echo "  - Kubernetes Secrets for production"
+          echo "  - HashiCorp Vault for secret management"
+          echo ""
+          echo "✅ Only .env.example and .env.template files are allowed"
+          exit 1
+        fi
+        
+        echo "✅ No .env files found in repository"
+
+    - name: Block certificate and key files
+      run: |
+        echo "🔍 Scanning for certificate and private key files..."
+        
+        # Find certificate and key files
+        CERT_FILES=$(find . -name "*.pem" -o -name "*.key" -o -name "*.crt" -o -name "*.p12" -o -name "*.pfx" -not -path "./node_modules/*" -not -path "./.git/*" || true)
+        
+        if [ ! -z "$CERT_FILES" ]; then
+          echo "❌ SECURITY VIOLATION: Certificate/key files found in repository!"
+          echo "The following files must be removed:"
+          echo "$CERT_FILES"
+          echo ""
+          echo "💡 Solution: Move certificates to:"
+          echo "  - Kubernetes TLS secrets"
+          echo "  - Cloud certificate managers (AWS ACM, etc.)"
+          echo "  - Secure secret management systems"
+          exit 1
+        fi
+        
+        echo "✅ No certificate/key files found in repository"
+
+    - name: Block other sensitive file patterns
+      run: |
+        echo "🔍 Scanning for other sensitive file patterns..."
+        
+        # Check for common sensitive files
+        SENSITIVE_PATTERNS=(
+          "*.secret"
+          "*.secrets"
+          "*password*"
+          "*token*"
+          "*.ssh"
+          "id_rsa*"
+          "*.p8"
+          "*.jks"
+        )
+        
+        FOUND_FILES=""
+        for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+          FILES=$(find . -name "$pattern" -not -path "./node_modules/*" -not -path "./.git/*" -not -name "*.md" -not -name "*.example" -not -name "*.template" || true)
+          if [ ! -z "$FILES" ]; then
+            FOUND_FILES="$FOUND_FILES\n$FILES"
+          fi
+        done
+        
+        if [ ! -z "$FOUND_FILES" ]; then
+          echo "❌ SECURITY VIOLATION: Potentially sensitive files found!"
+          echo -e "Files that may contain secrets:$FOUND_FILES"
+          echo ""
+          echo "💡 Review these files and move any secrets to secure storage"
+          exit 1
+        fi
+        
+        echo "✅ No sensitive file patterns detected"
+
+  # ========================================================================
+  # STRUCTURE GUARDRAILS - Maintain clean repository structure
+  # ========================================================================
+  structure-guardrails:
+    name: Repository Structure Guardrails
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Block unauthorized top-level files
+      run: |
+        echo "🔍 Checking top-level directory structure..."
+        
+        # Define allowed top-level items
+        ALLOWED_DIRS=("src" "docker" "k8s" "scripts" "monitoring" "security" "tests" "docs" "backend" "frontend" "audit" "backup" "config" "elasticsearch" "kibana" "logs" "node_modules" "secrets" "ssl" "volumes" "backups" "backup_local_changes" "backup_20250912_004935")
+        ALLOWED_FILES=("README.md" "LICENSE" "CHANGELOG.md" "CONTRIBUTING.md" "package.json" "package-lock.json" "yarn.lock" "tsconfig.json" "Dockerfile" "docker-compose.yml" "docker-compose.dev.yml" "docker-compose.prod.yml" ".gitignore" ".dockerignore" ".npmrc" ".env.example" ".env.template" "docker.env.example" ".env.phase4.production.template" ".env.production.template" "components.json" "DOCKER_STRUCTURE.md")
+        
+        # Get all top-level items
+        TOP_LEVEL_ITEMS=$(ls -1a | grep -v "^\.$" | grep -v "^\..$" | grep -v "^\.git$")
+        
+        VIOLATIONS=""
+        
+        for item in $TOP_LEVEL_ITEMS; do
+          if [ -d "$item" ]; then
+            # Check if directory is allowed
+            if [[ ! " ${ALLOWED_DIRS[@]} " =~ " ${item} " ]]; then
+              VIOLATIONS="$VIOLATIONS\n  📁 $item/ (unauthorized directory)"
+            fi
+          else
+            # Check if file is allowed
+            if [[ ! " ${ALLOWED_FILES[@]} " =~ " ${item} " ]]; then
+              VIOLATIONS="$VIOLATIONS\n  📄 $item (unauthorized file)"
+            fi
+          fi
+        done
+        
+        if [ ! -z "$VIOLATIONS" ]; then
+          echo "❌ STRUCTURE VIOLATION: Unauthorized top-level items found!"
+          echo -e "The following items are not allowed at the repository root:$VIOLATIONS"
+          echo ""
+          echo "💡 Allowed top-level structure:"
+          echo "  📁 Directories: src/, docker/, k8s/, scripts/, monitoring/, security/, tests/, docs/"
+          echo "  📄 Files: README.md, package.json, Dockerfile, docker-compose.yml, etc."
+          echo ""
+          echo "🔧 Solution: Move files to appropriate subdirectories or remove if unnecessary"
+          exit 1
+        fi
+        
+        echo "✅ Repository structure is compliant"
+
+    - name: Block Docker Compose bloat
+      run: |
+        echo "🔍 Checking Docker Compose file count..."
+        
+        # Count compose files (including in docker/compose/)
+        COMPOSE_COUNT=$(find . -name "docker-compose*.yml" -o -name "docker-compose*.yaml" | wc -l)
+        MAX_COMPOSE_FILES=4
+        
+        if [ $COMPOSE_COUNT -gt $MAX_COMPOSE_FILES ]; then
+          echo "❌ COMPOSE BLOAT DETECTED: Too many Docker Compose files!"
+          echo "Found: $COMPOSE_COUNT compose files"
+          echo "Maximum allowed: $MAX_COMPOSE_FILES"
+          echo ""
+          echo "📋 Current compose files:"
+          find . -name "docker-compose*.yml" -o -name "docker-compose*.yaml" | sort
+          echo ""
+          echo "💡 Allowed compose files:"
+          echo "  - docker-compose.yml (main)"
+          echo "  - docker-compose.dev.yml (development)"
+          echo "  - docker-compose.prod.yml (production)"
+          echo "  - docker/compose/docker-compose.production-hardened.yml (advanced production)"
+          echo ""
+          echo "🔧 Solution: Consolidate or remove redundant compose files"
+          exit 1
+        fi
+        
+        echo "✅ Docker Compose file count is within limits ($COMPOSE_COUNT/$MAX_COMPOSE_FILES)"
+
+    - name: Block Dockerfile proliferation
+      run: |
+        echo "🔍 Checking Dockerfile count and structure..."
+        
+        # Count total Dockerfiles
+        DOCKERFILE_COUNT=$(find . -name "Dockerfile*" -not -path "./node_modules/*" | wc -l)
+        MAX_DOCKERFILES=10
+        
+        if [ $DOCKERFILE_COUNT -gt $MAX_DOCKERFILES ]; then
+          echo "❌ DOCKERFILE BLOAT DETECTED: Too many Dockerfiles!"
+          echo "Found: $DOCKERFILE_COUNT Dockerfiles"
+          echo "Maximum allowed: $MAX_DOCKERFILES"
+          echo ""
+          echo "📋 Current Dockerfiles:"
+          find . -name "Dockerfile*" -not -path "./node_modules/*" | sort
+          echo ""
+          echo "💡 Preferred structure:"
+          echo "  - ./Dockerfile (main multi-stage)"
+          echo "  - docker/base/*.Dockerfile (base images)"
+          echo "  - docker/services/*.Dockerfile (service-specific)"
+          echo ""
+          echo "🔧 Solution: Use multi-stage builds instead of multiple Dockerfiles"
+          exit 1
+        fi
+        
+        echo "✅ Dockerfile count is reasonable ($DOCKERFILE_COUNT/$MAX_DOCKERFILES)"
+
+  # ========================================================================
+  # DEPENDENCY GUARDRAILS - Prevent dependency bloat
+  # ========================================================================
+  dependency-guardrails:
+    name: Dependency Guardrails
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Check for multiple package.json files
+      run: |
+        echo "🔍 Checking for package.json proliferation..."
+        
+        PACKAGE_JSON_COUNT=$(find . -name "package.json" -not -path "./node_modules/*" | wc -l)
+        MAX_PACKAGE_JSON=3  # Root, backend, frontend
+        
+        if [ $PACKAGE_JSON_COUNT -gt $MAX_PACKAGE_JSON ]; then
+          echo "❌ PACKAGE.JSON BLOAT: Too many package.json files!"
+          echo "Found: $PACKAGE_JSON_COUNT package.json files"
+          echo "Maximum recommended: $MAX_PACKAGE_JSON"
+          echo ""
+          echo "📋 Found package.json files:"
+          find . -name "package.json" -not -path "./node_modules/*" | sort
+          echo ""
+          echo "💡 Consider using a monorepo structure with workspaces"
+          exit 1
+        fi
+        
+        echo "✅ Package.json count is reasonable ($PACKAGE_JSON_COUNT/$MAX_PACKAGE_JSON)"
+
+    - name: Check for lock file consistency
+      run: |
+        echo "🔍 Checking package lock file consistency..."
+        
+        # Check for mixed lock files (both npm and yarn)
+        NPM_LOCKS=$(find . -name "package-lock.json" -not -path "./node_modules/*" | wc -l)
+        YARN_LOCKS=$(find . -name "yarn.lock" -not -path "./node_modules/*" | wc -l)
+        
+        if [ $NPM_LOCKS -gt 0 ] && [ $YARN_LOCKS -gt 0 ]; then
+          echo "❌ MIXED PACKAGE MANAGERS: Both npm and yarn lock files detected!"
+          echo "NPM locks: $NPM_LOCKS"
+          echo "Yarn locks: $YARN_LOCKS"
+          echo ""
+          echo "💡 Choose one package manager consistently"
+          exit 1
+        fi
+        
+        echo "✅ Package manager consistency maintained"
+
+  # ========================================================================
+  # CONFIGURATION GUARDRAILS - Prevent config sprawl
+  # ========================================================================
+  config-guardrails:
+    name: Configuration Guardrails
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Check for configuration file sprawl
+      run: |
+        echo "🔍 Checking for configuration file sprawl..."
+        
+        # Count various config files
+        CONFIG_PATTERNS=("*.config.js" "*.config.ts" "*.conf" "*rc.json" "*rc.js" "*rc.yml" "*rc.yaml")
+        TOTAL_CONFIGS=0
+        
+        for pattern in "${CONFIG_PATTERNS[@]}"; do
+          COUNT=$(find . -name "$pattern" -not -path "./node_modules/*" -not -path "./.git/*" | wc -l)
+          TOTAL_CONFIGS=$((TOTAL_CONFIGS + COUNT))
+        done
+        
+        MAX_CONFIG_FILES=15
+        
+        if [ $TOTAL_CONFIGS -gt $MAX_CONFIG_FILES ]; then
+          echo "❌ CONFIG SPRAWL: Too many configuration files!"
+          echo "Found: $TOTAL_CONFIGS config files"
+          echo "Maximum recommended: $MAX_CONFIG_FILES"
+          echo ""
+          echo "💡 Consider consolidating configuration or using a config directory"
+          exit 1
+        fi
+        
+        echo "✅ Configuration file count is reasonable ($TOTAL_CONFIGS/$MAX_CONFIG_FILES)"
+
+  # ========================================================================
+  # FINAL REPORT
+  # ========================================================================
+  guardrails-report:
+    name: Guardrails Summary Report
+    runs-on: ubuntu-latest
+    needs: [security-guardrails, structure-guardrails, dependency-guardrails, config-guardrails]
+    if: always()
+    
+    steps:
+    - name: Generate Guardrails Report
+      run: |
+        echo "🛡️ PRODUCTION GUARDRAILS REPORT"
+        echo "================================"
+        echo ""
+        
+        # Check job results
+        SECURITY_STATUS="${{ needs.security-guardrails.result }}"
+        STRUCTURE_STATUS="${{ needs.structure-guardrails.result }}"
+        DEPENDENCY_STATUS="${{ needs.dependency-guardrails.result }}"
+        CONFIG_STATUS="${{ needs.config-guardrails.result }}"
+        
+        echo "📊 Guardrail Results:"
+        echo "  🔒 Security: $SECURITY_STATUS"
+        echo "  🏗️ Structure: $STRUCTURE_STATUS"
+        echo "  📦 Dependencies: $DEPENDENCY_STATUS"
+        echo "  ⚙️ Configuration: $CONFIG_STATUS"
+        echo ""
+        
+        # Overall status
+        if [[ "$SECURITY_STATUS" == "success" && "$STRUCTURE_STATUS" == "success" && "$DEPENDENCY_STATUS" == "success" && "$CONFIG_STATUS" == "success" ]]; then
+          echo "✅ ALL GUARDRAILS PASSED - Repository is production-ready!"
+          echo ""
+          echo "🎯 Maintained Standards:"
+          echo "  ✅ No secrets in repository"
+          echo "  ✅ Clean directory structure"
+          echo "  ✅ Controlled Docker file count"
+          echo "  ✅ Reasonable dependency structure"
+          echo "  ✅ Managed configuration sprawl"
+        else
+          echo "❌ GUARDRAIL VIOLATIONS DETECTED"
+          echo ""
+          echo "🔧 Please fix the violations above before merging"
+          exit 1
+        fi

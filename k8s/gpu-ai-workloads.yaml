@@ -1,0 +1,475 @@
+# GPU-Optimized AI Workload Deployments
+# Templates for training, inference, and asset generation workloads
+
+---
+# Training Workload Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gameforge-training
+  namespace: gameforge
+  labels:
+    app: gameforge-training
+    workload-type: training
+    component: ai-training
+spec:
+  replicas: 1  # Training typically runs single instance
+  selector:
+    matchLabels:
+      app: gameforge-training
+      workload-type: training
+  template:
+    metadata:
+      labels:
+        app: gameforge-training
+        workload-type: training
+        gpu-enabled: "true"
+    spec:
+      # High priority for training workloads
+      priorityClassName: high-priority-training
+      
+      # GPU node affinity - prefer high-memory GPU nodes
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: accelerator
+                operator: In
+                values: ["nvidia-tesla", "nvidia-rtx"]
+              - key: workload-type
+                operator: In
+                values: ["training", "mixed"]
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: gpu-memory
+                operator: In
+                values: ["high", "ultra"]
+          - weight: 50
+            preference:
+              matchExpressions:
+              - key: node-type
+                operator: In
+                values: ["gpu-dedicated"]
+      
+      # GPU tolerations
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      - key: accelerator
+        operator: Equal
+        value: nvidia
+        effect: NoSchedule
+      - key: workload-type
+        operator: Equal
+        value: training
+        effect: NoSchedule
+      
+      containers:
+      - name: gameforge-training
+        image: gameforge:training-gpu-latest
+        
+        # GPU and compute resources
+        resources:
+          requests:
+            cpu: 4
+            memory: 16Gi
+            nvidia.com/gpu: 1
+            ephemeral-storage: 20Gi
+          limits:
+            cpu: 8
+            memory: 32Gi
+            nvidia.com/gpu: 1
+            ephemeral-storage: 50Gi
+        
+        # Environment variables for training
+        env:
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+        - name: NVIDIA_REQUIRE_CUDA
+          value: "cuda>=11.0"
+        - name: WORKLOAD_TYPE
+          value: "training"
+        - name: GPU_MEMORY_FRACTION
+          value: "0.9"
+        - name: MIXED_PRECISION
+          value: "true"
+        - name: MODEL_PARALLEL
+          value: "false"
+        
+        # Training-specific configuration
+        - name: BATCH_SIZE
+          value: "32"
+        - name: LEARNING_RATE
+          value: "0.001"
+        - name: MAX_EPOCHS
+          value: "100"
+        - name: CHECKPOINT_INTERVAL
+          value: "10"
+        
+        # Storage mounts
+        volumeMounts:
+        - name: model-storage
+          mountPath: /app/models
+        - name: dataset-storage
+          mountPath: /app/datasets
+          readOnly: true
+        - name: checkpoint-storage
+          mountPath: /app/checkpoints
+        - name: logs-storage
+          mountPath: /app/logs
+        - name: tmp-storage
+          mountPath: /tmp
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 2
+        
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 6006
+          name: tensorboard
+        - containerPort: 9090
+          name: metrics
+      
+      # Shared volumes
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: gameforge-model-storage
+      - name: dataset-storage
+        persistentVolumeClaim:
+          claimName: gameforge-dataset-storage
+      - name: checkpoint-storage
+        persistentVolumeClaim:
+          claimName: gameforge-checkpoint-storage
+      - name: logs-storage
+        persistentVolumeClaim:
+          claimName: gameforge-logs-storage
+      - name: tmp-storage
+        emptyDir:
+          sizeLimit: 20Gi
+      
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+---
+# Inference Workload Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gameforge-inference
+  namespace: gameforge
+  labels:
+    app: gameforge-inference
+    workload-type: inference
+    component: ai-inference
+spec:
+  replicas: 3  # Multiple replicas for high availability
+  selector:
+    matchLabels:
+      app: gameforge-inference
+      workload-type: inference
+  template:
+    metadata:
+      labels:
+        app: gameforge-inference
+        workload-type: inference
+        gpu-enabled: "true"
+    spec:
+      # Medium priority for inference workloads
+      priorityClassName: medium-priority-inference
+      
+      # GPU node affinity - can use medium-memory GPU nodes
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: accelerator
+                operator: In
+                values: ["nvidia-tesla", "nvidia-rtx"]
+              - key: workload-type
+                operator: In
+                values: ["inference", "mixed"]
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: gpu-memory
+                operator: In
+                values: ["medium", "high"]
+        
+        # Anti-affinity to spread replicas across nodes
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values: ["gameforge-inference"]
+              topologyKey: kubernetes.io/hostname
+      
+      # GPU tolerations
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      - key: accelerator
+        operator: Equal
+        value: nvidia
+        effect: NoSchedule
+      
+      containers:
+      - name: gameforge-inference
+        image: gameforge:inference-gpu-latest
+        
+        # GPU and compute resources - optimized for inference
+        resources:
+          requests:
+            cpu: 2
+            memory: 8Gi
+            nvidia.com/gpu: 1
+            ephemeral-storage: 10Gi
+          limits:
+            cpu: 4
+            memory: 16Gi
+            nvidia.com/gpu: 1
+            ephemeral-storage: 20Gi
+        
+        # Environment variables for inference
+        env:
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+        - name: WORKLOAD_TYPE
+          value: "inference"
+        - name: GPU_MEMORY_FRACTION
+          value: "0.7"
+        - name: BATCH_SIZE
+          value: "16"
+        - name: MAX_SEQUENCE_LENGTH
+          value: "512"
+        - name: ENABLE_TENSORRT
+          value: "true"
+        - name: PRECISION
+          value: "fp16"
+        
+        # Storage mounts
+        volumeMounts:
+        - name: model-storage
+          mountPath: /app/models
+          readOnly: true
+        - name: cache-storage
+          mountPath: /app/cache
+        - name: logs-storage
+          mountPath: /app/logs
+        
+        # Health checks - faster for inference
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+      
+      # Shared volumes
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: gameforge-model-storage
+      - name: cache-storage
+        emptyDir:
+          sizeLimit: 5Gi
+      - name: logs-storage
+        persistentVolumeClaim:
+          claimName: gameforge-logs-storage
+
+---
+# Asset Generation Workload Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gameforge-asset-generation
+  namespace: gameforge
+  labels:
+    app: gameforge-asset-generation
+    workload-type: asset-generation
+    component: ai-asset-gen
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gameforge-asset-generation
+      workload-type: asset-generation
+  template:
+    metadata:
+      labels:
+        app: gameforge-asset-generation
+        workload-type: asset-generation
+        gpu-enabled: "true"
+    spec:
+      # Medium priority for asset generation
+      priorityClassName: medium-priority-inference
+      
+      # GPU node affinity
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: accelerator
+                operator: In
+                values: ["nvidia-tesla", "nvidia-rtx"]
+              - key: workload-type
+                operator: In
+                values: ["asset-generation", "mixed"]
+      
+      # GPU tolerations
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      - key: accelerator
+        operator: Equal
+        value: nvidia
+        effect: NoSchedule
+      
+      containers:
+      - name: gameforge-asset-generation
+        image: gameforge:asset-generation-gpu-latest
+        
+        # GPU and compute resources
+        resources:
+          requests:
+            cpu: 3
+            memory: 12Gi
+            nvidia.com/gpu: 1
+            ephemeral-storage: 15Gi
+          limits:
+            cpu: 6
+            memory: 24Gi
+            nvidia.com/gpu: 1
+            ephemeral-storage: 30Gi
+        
+        # Environment variables for asset generation
+        env:
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+        - name: WORKLOAD_TYPE
+          value: "asset-generation"
+        - name: GPU_MEMORY_FRACTION
+          value: "0.8"
+        - name: DIFFUSION_STEPS
+          value: "50"
+        - name: IMAGE_SIZE
+          value: "1024"
+        - name: GUIDANCE_SCALE
+          value: "7.5"
+        - name: ENABLE_SAFETY_CHECKER
+          value: "true"
+        
+        # Storage mounts
+        volumeMounts:
+        - name: model-storage
+          mountPath: /app/models
+          readOnly: true
+        - name: asset-storage
+          mountPath: /app/assets
+        - name: cache-storage
+          mountPath: /app/cache
+        - name: logs-storage
+          mountPath: /app/logs
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 20
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 2
+        
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+      
+      # Shared volumes
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: gameforge-model-storage
+      - name: asset-storage
+        persistentVolumeClaim:
+          claimName: gameforge-asset-storage
+      - name: cache-storage
+        emptyDir:
+          sizeLimit: 10Gi
+      - name: logs-storage
+        persistentVolumeClaim:
+          claimName: gameforge-logs-storage

@@ -1,0 +1,14 @@
+filebeat.inputs:
+- paths:
+  - /var/lib/docker/containers/*/*.log
+  processors:
+  - add_docker_metadata:
+      host: unix:///var/run/docker.sock
+  type: container
+logging.level: info
+output.elasticsearch:
+  hosts:
+  - elasticsearch:9200
+  index: gameforge-logs-%{+yyyy.MM.dd}
+setup.template.name: gameforge-logs
+setup.template.pattern: gameforge-logs-*

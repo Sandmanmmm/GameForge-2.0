@@ -1,0 +1,155 @@
+# Prometheus Configuration for GameForge AI Production
+# Comprehensive metrics collection and alerting setup
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'gameforge-production'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  - "alerts.yml"
+  - "recording_rules.yml"
+
+# A scrape configuration containing exactly one endpoint to scrape:
+scrape_configs:
+  # GameForge Application Metrics
+  - job_name: 'gameforge-app'
+    static_configs:
+      - targets: ['gameforge-app:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    honor_labels: true
+    
+  # GameForge Health Endpoint
+  - job_name: 'gameforge-health'
+    static_configs:
+      - targets: ['gameforge-app:8000']
+    metrics_path: '/health'
+    scrape_interval: 30s
+    scrape_timeout: 5s
+    
+  # Redis Metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    
+  # PostgreSQL Metrics
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres_exporter:9187']
+    scrape_interval: 30s
+    
+  # MinIO Metrics
+  - job_name: 'minio'
+    static_configs:
+      - targets: ['minio:9000']
+    metrics_path: '/minio/v2/metrics/cluster'
+    scrape_interval: 30s
+    
+  # Vault Metrics
+  - job_name: 'vault'
+    static_configs:
+      - targets: ['vault:8200']
+    metrics_path: '/v1/sys/metrics'
+    params:
+      format: ['prometheus']
+    bearer_token_file: '/etc/prometheus/vault-token'
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+    
+  # Node Exporter (System Metrics)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+    
+  # cAdvisor (Container Metrics)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 15s
+    
+  # GPU Metrics (if available)
+  - job_name: 'dcgm-exporter'
+    static_configs:
+      - targets: ['dcgm-exporter:9400']
+    scrape_interval: 15s
+    
+  # Nginx Metrics
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    
+  # Elasticsearch Metrics
+  - job_name: 'elasticsearch'
+    static_configs:
+      - targets: ['elasticsearch_exporter:9114']
+    scrape_interval: 30s
+    
+  # Filebeat Metrics
+  - job_name: 'filebeat'
+    static_configs:
+      - targets: ['filebeat:5066']
+    metrics_path: '/stats'
+    scrape_interval: 30s
+    
+  # Logstash Metrics
+  - job_name: 'logstash'
+    static_configs:
+      - targets: ['logstash:9600']
+    metrics_path: '/_node/stats'
+    scrape_interval: 30s
+    
+  # Kibana Metrics
+  - job_name: 'kibana'
+    static_configs:
+      - targets: ['kibana:5601']
+    metrics_path: '/api/status'
+    scrape_interval: 60s
+    
+  # Grafana Metrics
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    
+  # Prometheus Self-Monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+
+# Remote write configuration for long-term storage
+remote_write:
+  - url: "${PROMETHEUS_REMOTE_WRITE_URL}"
+    basic_auth:
+      username: "${PROMETHEUS_REMOTE_WRITE_USERNAME}"
+      password: "${PROMETHEUS_REMOTE_WRITE_PASSWORD}"
+    queue_config:
+      max_samples_per_send: 1000
+      max_shards: 200
+      capacity: 2500
+
+# Remote read configuration
+remote_read:
+  - url: "${PROMETHEUS_REMOTE_READ_URL}"
+    basic_auth:
+      username: "${PROMETHEUS_REMOTE_READ_USERNAME}"
+      password: "${PROMETHEUS_REMOTE_READ_PASSWORD}"

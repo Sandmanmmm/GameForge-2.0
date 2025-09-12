@@ -1,0 +1,263 @@
+# ========================================================================
+# GameForge AI Production Platform - Vast.ai Docker Ignore
+# Optimized to exclude large files and reduce build context size
+# ========================================================================
+
+# ========================================================================
+# Large AI Models and Assets (Exclude from build context)
+# ========================================================================
+**/*stable-diffusion*
+**/*diffusion*
+**/*sdxl*
+**/*checkpoint*
+**/*safetensors*
+**/*ckpt*
+**/*bin*
+**/*model*
+**/models/**
+**/model_cache/**
+**/models_cache/**
+**/checkpoints/**
+**/weights/**
+**/*.pth
+**/*.pt
+**/*.pkl
+**/*.safetensors
+
+# ========================================================================
+# Vast.ai Specific Exclusions
+# ========================================================================
+# Local development files
+.env.local
+.env.development
+docker-compose.yml
+docker-compose.dev.yml
+docker-compose.local.yml
+
+# Build artifacts from other platforms
+Dockerfile.local
+Dockerfile.dev
+build-local.sh
+deploy-local.sh
+
+# ========================================================================
+# Development and Testing Files
+# ========================================================================
+# Git repository
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Python development
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Testing
+.coverage
+.pytest_cache/
+.tox/
+.nox/
+htmlcov/
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# ========================================================================
+# Documentation and Non-Essential Files
+# ========================================================================
+# Documentation
+*.md
+docs/
+documentation/
+README*
+CHANGELOG*
+LICENSE*
+CONTRIBUTING*
+
+# Non-essential scripts (keep only production ones)
+scripts/dev-*
+scripts/test-*
+scripts/local-*
+scripts/debug-*
+
+# ========================================================================
+# Logs and Temporary Files
+# ========================================================================
+# Application logs
+logs/
+*.log
+log/
+*.out
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+*.tmp
+*.temp
+
+# Cache directories
+.cache/
+.npm/
+.yarn/
+node_modules/
+.next/
+.nuxt/
+
+# ========================================================================
+# Volume and Data Directories
+# ========================================================================
+# Docker volumes (will be mounted at runtime)
+volumes/
+data/
+storage/
+uploads/
+generated_assets/
+cache/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# ========================================================================
+# Security and Configuration Files
+# ========================================================================
+# Environment files (except production)
+.env
+.env.*
+!.env.vastai-production
+!.env.example
+
+# Security keys and certificates
+*.key
+*.pem
+*.crt
+*.cert
+keys/
+certs/
+secrets/
+
+# Configuration overrides
+config/local*
+config/dev*
+config/test*
+
+# ========================================================================
+# Build and Deployment Artifacts
+# ========================================================================
+# Docker artifacts
+.dockerignore.local
+docker-compose.override.yml
+docker-compose.production.yml
+docker-compose.production-hardened.yml
+
+# Build outputs
+dist/
+build/
+out/
+
+# Package manager files
+package-lock.json
+yarn.lock
+Pipfile.lock
+
+# ========================================================================
+# Platform-Specific Files
+# ========================================================================
+# Windows
+*.exe
+*.msi
+*.bat
+*.cmd
+*.ps1
+
+# Linux/Unix
+*.sh
+!scripts/entrypoint*.sh
+!scripts/init*.sh
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ========================================================================
+# Monitoring and Metrics
+# ========================================================================
+# Monitoring data
+monitoring/data/
+metrics/
+prometheus/data/
+grafana/data/
+
+# ========================================================================
+# Backup and Archive Files
+# ========================================================================
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.tbz2
+*.tar.xz
+*.txz
+*.rar
+*.7z
+backup/
+backups/
+
+# ========================================================================
+# Keep Essential Files (Override exclusions)
+# ========================================================================
+# Keep essential scripts
+!scripts/entrypoint-phase4.sh
+!scripts/init-db.sh
+!scripts/health-check.sh
+
+# Keep production configurations
+!config/production*
+!nginx/nginx.conf
+!monitoring/prometheus.yml
+
+# Keep essential documentation
+!README.md
+!DEPLOYMENT.md

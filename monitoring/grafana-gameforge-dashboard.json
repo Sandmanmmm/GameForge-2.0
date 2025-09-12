@@ -1,0 +1,264 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "GameForge AI Production Dashboard",
+    "tags": ["gameforge", "ai", "production", "gpu"],
+    "timezone": "UTC",
+    "refresh": "10s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "GPU Utilization",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "avg(nvidia_gpu_utilization_gpu)",
+            "legendFormat": "GPU Utilization %",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 70},
+                {"color": "red", "value": 90}
+              ]
+            },
+            "unit": "percent"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "GPU Memory Usage",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "avg(nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes * 100)",
+            "legendFormat": "GPU Memory %",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 80},
+                {"color": "red", "value": 95}
+              ]
+            },
+            "unit": "percent"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Inference Request Latency",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(gameforge_inference_request_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "50th percentile",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(gameforge_inference_request_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "95th percentile",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(gameforge_inference_request_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "99th percentile",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Latency (seconds)",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Application Request Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "sum(rate(gameforge_http_requests_total[5m])) by (method, status)",
+            "legendFormat": "{{method}} {{status}}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Requests/sec",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Model Loading Times",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "targets": [
+          {
+            "expr": "avg(gameforge_model_load_duration_seconds) by (model_name)",
+            "legendFormat": "{{model_name}}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Load Time (seconds)",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Container Resource Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+        "targets": [
+          {
+            "expr": "avg(container_memory_usage_bytes{name=~\"gameforge.*\"}) by (name) / 1024 / 1024 / 1024",
+            "legendFormat": "{{name}} Memory GB",
+            "refId": "A"
+          },
+          {
+            "expr": "avg(rate(container_cpu_usage_seconds_total{name=~\"gameforge.*\"}[5m])) by (name) * 100",
+            "legendFormat": "{{name}} CPU %",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Usage",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Security Events",
+        "type": "logs",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+        "targets": [
+          {
+            "expr": "{job=\"gameforge-app\"} |= \"SECURITY\" | json",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Model Storage Operations",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+        "targets": [
+          {
+            "expr": "sum(rate(gameforge_model_download_total[5m])) by (status)",
+            "legendFormat": "Downloads {{status}}",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(gameforge_model_cache_hits_total[5m]))",
+            "legendFormat": "Cache Hits",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(rate(gameforge_model_cache_misses_total[5m]))",
+            "legendFormat": "Cache Misses",
+            "refId": "C"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Database Performance",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+        "targets": [
+          {
+            "expr": "avg(pg_stat_database_tup_fetched{datname=\"gameforge_prod\"})",
+            "legendFormat": "Tuples Fetched",
+            "refId": "A"
+          },
+          {
+            "expr": "avg(pg_stat_database_tup_inserted{datname=\"gameforge_prod\"})",
+            "legendFormat": "Tuples Inserted",
+            "refId": "B"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "System Health Status",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+        "targets": [
+          {
+            "expr": "up{job=\"gameforge-app\"}",
+            "legendFormat": "App Status",
+            "refId": "A"
+          },
+          {
+            "expr": "up{job=\"gameforge-gpu-inference\"}",
+            "legendFormat": "GPU Inference",
+            "refId": "B"
+          },
+          {
+            "expr": "up{job=\"vault\"}",
+            "legendFormat": "Vault Status",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {
+                "options": {
+                  "0": {"text": "DOWN"},
+                  "1": {"text": "UP"}
+                },
+                "type": "value"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "prometheus",
+          "expr": "changes(gameforge_app_info[1h])",
+          "textFormat": "Deployment"
+        }
+      ]
+    }
+  }
+}

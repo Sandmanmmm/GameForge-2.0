@@ -1,0 +1,208 @@
+# GPU Workload Resource Policies and Scheduling Configuration
+# This file defines resource quotas, priority classes, and scheduling policies for AI workloads
+
+---
+# GPU Resource Quota for AI workloads
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-resource-quota
+  namespace: gameforge
+spec:
+  hard:
+    # Limit total GPU resources in the namespace
+    nvidia.com/gpu: "8"
+    # Limit CPU and memory for GPU workloads
+    requests.cpu: "32"
+    requests.memory: 128Gi
+    limits.cpu: "64"
+    limits.memory: 256Gi
+    # Limit number of pods that can request GPUs
+    count/pods: "16"
+    # Limit persistent volumes for model storage
+    persistentvolumeclaims: "10"
+    requests.storage: 1Ti
+
+---
+# Priority Classes for different AI workload types
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority-training
+value: 1000
+globalDefault: false
+description: "High priority for critical model training workloads"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: medium-priority-inference
+value: 500
+globalDefault: false
+description: "Medium priority for inference and asset generation workloads"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority-batch
+value: 100
+globalDefault: false
+description: "Low priority for batch processing and experimentation"
+
+---
+# GPU Node Affinity Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-scheduling-config
+  namespace: gameforge
+data:
+  # GPU node requirements for different workload types
+  training-node-selector: |
+    accelerator: nvidia-tesla
+    gpu-memory: high
+    workload-type: training
+  
+  inference-node-selector: |
+    accelerator: nvidia-tesla
+    gpu-memory: medium
+    workload-type: inference
+  
+  development-node-selector: |
+    accelerator: nvidia-tesla
+    workload-type: development
+
+---
+# Network Policy for GPU workloads
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gpu-workload-network-policy
+  namespace: gameforge
+spec:
+  podSelector:
+    matchLabels:
+      workload-type: gpu-enabled
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: gameforge
+    - podSelector:
+        matchLabels:
+          app: gameforge-api
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9000
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: gameforge
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 6379  # Redis
+
+---
+# Pod Disruption Budget for GPU workloads
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gpu-training-pdb
+  namespace: gameforge
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      workload-type: training
+      app: gameforge-training
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gpu-inference-pdb
+  namespace: gameforge
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      workload-type: inference
+      app: gameforge-inference
+
+---
+# Horizontal Pod Autoscaler for inference workloads
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gpu-inference-hpa
+  namespace: gameforge
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gameforge-inference
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # Custom GPU metrics (requires metrics server with GPU support)
+  - type: Pods
+    pods:
+      metric:
+        name: nvidia_gpu_utilization
+      target:
+        type: AverageValue
+        averageValue: "80"
+
+---
+# Vertical Pod Autoscaler for training workloads
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: gpu-training-vpa
+  namespace: gameforge
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gameforge-training
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: gameforge-training
+      minAllowed:
+        cpu: 2
+        memory: 4Gi
+        nvidia.com/gpu: 1
+      maxAllowed:
+        cpu: 16
+        memory: 32Gi
+        nvidia.com/gpu: 4
+      controlledResources: ["cpu", "memory"]

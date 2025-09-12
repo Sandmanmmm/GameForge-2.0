@@ -1,0 +1,265 @@
+# GameForge AI Production External Storage Configuration
+# Replaces Docker volumes with external cloud storage and persistent volumes
+
+# ====================================================================
+# SECTION 1: EXTERNAL STORAGE ARCHITECTURE
+# ====================================================================
+
+# External Storage Strategy:
+# 1. Replace all Docker named volumes with external storage backends
+# 2. MinIO for object storage (models, generated content, backups)
+# 3. PostgreSQL external managed instance (Azure Database, AWS RDS)
+# 4. Redis external managed instance (Azure Cache, AWS ElastiCache)
+# 5. Persistent Kubernetes volumes for logs and temporary data
+# 6. Cloud file systems for shared application data
+
+# ====================================================================
+# SECTION 2: PRODUCTION DOCKER COMPOSE EXTERNAL STORAGE
+# ====================================================================
+
+# docker-compose.external-storage.yml
+# This override replaces all internal volumes with external storage
+services:
+  # PostgreSQL - External Managed Database
+  postgres:
+    image: postgres:15
+    # Remove this service in production - use external managed database
+    # Azure: Azure Database for PostgreSQL
+    # AWS: Amazon RDS for PostgreSQL
+    # GCP: Cloud SQL for PostgreSQL
+    deploy:
+      replicas: 0  # Disable internal PostgreSQL in production
+
+  # Redis - External Managed Cache
+  redis:
+    image: redis:7-alpine
+    # Remove this service in production - use external managed Redis
+    # Azure: Azure Cache for Redis
+    # AWS: Amazon ElastiCache for Redis
+    # GCP: Memorystore for Redis
+    deploy:
+      replicas: 0  # Disable internal Redis in production
+
+  # MinIO - External Object Storage
+  minio:
+    image: minio/minio:latest
+    environment:
+      # Use external MinIO cluster or cloud object storage
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_SERVER_URL: ${MINIO_EXTERNAL_URL}
+    # Mount external persistent storage instead of volumes
+    volumes:
+      # Replace with cloud storage or external persistent volume
+      - type: bind
+        source: ${EXTERNAL_STORAGE_PATH}/minio-data
+        target: /data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # GameForge App - External Storage Configuration
+  gameforge-app:
+    image: gameforge/ai-platform:latest
+    environment:
+      # External Database Configuration
+      DATABASE_URL: ${EXTERNAL_DATABASE_URL}
+      # Example: postgresql://user:pass@azure-postgres.postgres.database.azure.com:5432/gameforge
+      
+      # External Redis Configuration
+      REDIS_URL: ${EXTERNAL_REDIS_URL}
+      # Example: redis://azure-redis.redis.cache.windows.net:6380/0
+      
+      # External MinIO Configuration
+      MINIO_ENDPOINT: ${EXTERNAL_MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${EXTERNAL_MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${EXTERNAL_MINIO_SECRET_KEY}
+      MINIO_BUCKET_MODELS: ${MINIO_BUCKET_MODELS:-gameforge-models}
+      MINIO_BUCKET_CONTENT: ${MINIO_BUCKET_CONTENT:-gameforge-content}
+      MINIO_BUCKET_BACKUPS: ${MINIO_BUCKET_BACKUPS:-gameforge-backups}
+      
+      # External Storage Paths
+      MODEL_CACHE_PATH: ${EXTERNAL_STORAGE_PATH}/model-cache
+      CONTENT_STORAGE_PATH: ${EXTERNAL_STORAGE_PATH}/generated-content
+      LOG_STORAGE_PATH: ${EXTERNAL_STORAGE_PATH}/logs
+      TEMP_STORAGE_PATH: ${EXTERNAL_STORAGE_PATH}/temp
+    volumes:
+      # External persistent storage mounts
+      - type: bind
+        source: ${EXTERNAL_STORAGE_PATH}/model-cache
+        target: /app/models
+      - type: bind
+        source: ${EXTERNAL_STORAGE_PATH}/generated-content
+        target: /app/content
+      - type: bind
+        source: ${EXTERNAL_STORAGE_PATH}/logs
+        target: /app/logs
+      - type: bind
+        source: ${EXTERNAL_STORAGE_PATH}/temp
+        target: /tmp/gameforge
+
+# Remove all named volumes - replaced with external storage
+volumes: {}
+
+# ====================================================================
+# SECTION 3: KUBERNETES EXTERNAL STORAGE CONFIGURATION
+# ====================================================================
+
+# k8s-external-storage.yaml
+# Kubernetes configuration for external storage backends
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external-storage-config
+  namespace: gameforge
+data:
+  # External Database Configuration
+  database-url: "postgresql://gameforge_user@azure-postgres.postgres.database.azure.com:5432/gameforge_prod"
+  redis-url: "redis://azure-redis.redis.cache.windows.net:6380/0"
+  
+  # External MinIO Configuration
+  minio-endpoint: "https://gameforge-minio.s3.amazonaws.com"
+  minio-bucket-models: "gameforge-models-prod"
+  minio-bucket-content: "gameforge-content-prod"
+  minio-bucket-backups: "gameforge-backups-prod"
+  
+  # Storage Class Configuration
+  storage-class: "azure-premium-ssd"  # or "gp3" for AWS
+  
+---
+# Persistent Volume Claims for temporary/cache data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gameforge-model-cache
+  namespace: gameforge
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: azure-premium-ssd
+  resources:
+    requests:
+      storage: 100Gi  # Model cache storage
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gameforge-logs
+  namespace: gameforge
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: azure-premium-ssd
+  resources:
+    requests:
+      storage: 50Gi  # Log storage
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gameforge-temp
+  namespace: gameforge
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: azure-premium-ssd
+  resources:
+    requests:
+      storage: 20Gi  # Temporary data storage
+
+---
+# GameForge Deployment with External Storage
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gameforge-app
+  namespace: gameforge
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gameforge-app
+  template:
+    metadata:
+      labels:
+        app: gameforge-app
+    spec:
+      containers:
+      - name: gameforge
+        image: gameforge/ai-platform:latest
+        env:
+        # External Database
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: external-database-secret
+              key: url
+        
+        # External Redis
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: external-redis-secret
+              key: url
+        
+        # External MinIO
+        - name: MINIO_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: external-storage-config
+              key: minio-endpoint
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: external-minio-secret
+              key: access-key
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: external-minio-secret
+              key: secret-key
+        
+        # Storage Paths
+        - name: MODEL_CACHE_PATH
+          value: "/app/model-cache"
+        - name: LOG_STORAGE_PATH
+          value: "/app/logs"
+        - name: TEMP_STORAGE_PATH
+          value: "/tmp/gameforge"
+        
+        volumeMounts:
+        - name: model-cache
+          mountPath: /app/model-cache
+        - name: logs
+          mountPath: /app/logs
+        - name: temp
+          mountPath: /tmp/gameforge
+        
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+      
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: gameforge-model-cache
+      - name: logs
+        persistentVolumeClaim:
+          claimName: gameforge-logs
+      - name: temp
+        persistentVolumeClaim:
+          claimName: gameforge-temp
+
+# ====================================================================
+# SECTION 4: CLOUD STORAGE INTEGRATION SCRIPTS
+# ====================================================================

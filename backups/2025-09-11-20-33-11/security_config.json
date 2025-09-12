@@ -1,0 +1,43 @@
+{
+  "cors": {
+    "allow_origins": [
+      "https://yourdomain.com"
+    ],
+    "allow_methods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "allow_headers": [
+      "*"
+    ],
+    "allow_credentials": true
+  },
+  "headers": {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "1; mode=block",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "Content-Security-Policy": "default-src 'self'"
+  },
+  "authentication": {
+    "jwt_expire_minutes": 30,
+    "refresh_expire_days": 7,
+    "max_login_attempts": 5,
+    "lockout_duration_minutes": 15
+  },
+  "rate_limiting": {
+    "enabled": true,
+    "default_limits": {
+      "anonymous": "10/minute",
+      "authenticated": "100/minute",
+      "premium": "1000/minute"
+    }
+  },
+  "api_keys": {
+    "enabled": true,
+    "require_whitelist": true,
+    "max_keys_per_user": 5
+  }
+}

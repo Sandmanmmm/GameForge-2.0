@@ -13,6 +13,15 @@ transformers_cache/
 .cache/
 models_cache/
 
+# Vast.ai specific exclusions - Large model directories
+services/asset-gen/models/
+services/asset-gen/models/**
+stable-diffusion-xl-base-1.0/
+text_encoder/
+*.msgpack
+*.onnx
+*.tflite
+
 # Backup directories
 backup_local_changes/
 backup/

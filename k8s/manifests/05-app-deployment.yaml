@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: gameforge
+    component: app
+  name: gameforge-app
+  namespace: gameforge
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gameforge
+      component: app
+  template:
+    metadata:
+      labels:
+        app: gameforge
+        component: app
+    spec:
+      containers:
+      - env:
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: DATABASE_PASSWORD
+              name: gameforge-secrets
+        envFrom:
+        - configMapRef:
+            name: gameforge-config
+        image: gameforge/app:latest
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        name: gameforge-app
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
+        volumeMounts:
+        - mountPath: /app/data
+          name: storage
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: gameforge-storage

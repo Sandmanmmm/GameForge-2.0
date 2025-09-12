@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  labels:
+    app: gameforge
+    component: operations
+    type: cronjob
+  name: health-monitoring
+  namespace: gameforge
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - command:
+            - /scripts/health-check.sh
+            image: gameforge/monitoring:latest
+            name: health-monitoring
+            resources:
+              requests:
+                cpu: 25m
+                memory: 64Mi
+            volumeMounts:
+            - mountPath: /var/log/gameforge
+              name: logs
+            - mountPath: /etc/gameforge
+              name: config
+          restartPolicy: OnFailure
+          volumes:
+          - name: logs
+            persistentVolumeClaim:
+              claimName: gameforge-logs
+          - configMap:
+              name: gameforge-config
+            name: config
+  schedule: '*/5 * * * *'

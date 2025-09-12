@@ -1,0 +1,28 @@
+backup_strategy:
+  application_data:
+    frequency: daily
+    location:
+    - local
+    - s3
+    retention: 90 days
+  database:
+    frequency: every 6 hours
+    location:
+    - local
+    - s3
+    - azure-blob
+    retention: 30 days
+  models:
+    frequency: weekly
+    location:
+    - s3
+    - azure-blob
+    retention: 1 year
+failover_procedures:
+  auto_failover: true
+  manual_approval_required: false
+  primary_region: us-west-2
+  secondary_region: us-east-1
+recovery_objectives:
+  rpo: 15 minutes
+  rto: 1 hour

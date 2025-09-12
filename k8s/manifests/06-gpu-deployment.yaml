@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: gameforge
+    component: gpu-inference
+  name: gpu-inference
+  namespace: gameforge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gameforge
+      component: gpu-inference
+  template:
+    metadata:
+      labels:
+        app: gameforge
+        component: gpu-inference
+    spec:
+      containers:
+      - image: gameforge/gpu-inference:latest
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        name: gpu-inference
+        ports:
+        - containerPort: 8000
+          name: http
+        resources:
+          limits:
+            cpu: '4'
+            memory: 16Gi
+            nvidia.com/gpu: '1'
+          requests:
+            cpu: '2'
+            memory: 8Gi
+            nvidia.com/gpu: '1'
+      nodeSelector:
+        accelerator: nvidia-tesla-gpu
