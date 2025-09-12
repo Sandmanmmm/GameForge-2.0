@@ -4,11 +4,11 @@ metadata:
   labels:
     app: grafana
   name: grafana
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   ports:
-  - name: http
-    port: 3001
+  - name: web
+    port: 3000
     targetPort: 3000
   selector:
     app: grafana

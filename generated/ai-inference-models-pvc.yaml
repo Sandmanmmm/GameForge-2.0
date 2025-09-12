@@ -2,11 +2,11 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: ai-inference-models
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   accessModes:
   - ReadWriteOnce
   resources:
     requests:
-      storage: 50Gi
-  storageClassName: fast-ssd
+      storage: 100Gi
+  storageClassName: standard

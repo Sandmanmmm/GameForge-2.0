@@ -1,0 +1,134 @@
+# Trivy Configuration for Container Security Scanning
+# Comprehensive vulnerability and misconfiguration detection
+
+# Global scan settings
+format: "json"
+timeout: "10m"
+cache-dir: ".trivy-cache"
+debug: false
+
+# Vulnerability scanning
+vulnerability:
+  # Scan types to include
+  type: "os,library"
+  
+  # Severity levels that should fail the build
+  exit-code: 1
+  severity: "HIGH,CRITICAL"
+  
+  # Ignore unfixed vulnerabilities (optional - set to false for strict mode)
+  ignore-unfixed: false
+  
+  # Skip files/directories
+  skip-files:
+    - "/usr/share/doc/**"
+    - "/usr/share/man/**"
+    - "/var/lib/apt/lists/**"
+    - "/tmp/**"
+    - "/var/tmp/**"
+
+# Secret detection
+secret:
+  config: ".trivy-secret.yaml"
+
+# Misconfiguration scanning
+misconfiguration:
+  # Include Dockerfile, Kubernetes, Terraform scanning
+  scanners: "dockerfile,kubernetes,terraform"
+  
+  # Policy bundles to include
+  policy-bundle-repository: "https://github.com/aquasecurity/trivy-policies"
+  
+  # Custom policy paths
+  config-policy:
+    - "security/policies/opa"
+    - "security/policies/conftest"
+
+# License scanning (for compliance)
+license:
+  # License types that should trigger warnings
+  forbidden: "GPL-2.0,GPL-3.0,AGPL-1.0,AGPL-3.0"
+  
+  # Allow-list for acceptable licenses
+  permitted: "MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC"
+
+# Database settings
+db:
+  # Auto-update vulnerability database
+  skip-update: false
+  
+  # Download timeout
+  repository: "ghcr.io/aquasecurity/trivy-db"
+
+# Output settings
+output:
+  # Output file (relative to project root)
+  file: "security/reports/trivy-scan-{datetime}.json"
+  
+  # Report format options
+  format: "json"
+  
+  # Include additional information
+  list-all-pkgs: true
+
+# Custom check configurations
+checks:
+  # Dockerfile checks
+  dockerfile:
+    - "CKV_DOCKER_1" # Ensure port 22 is not exposed
+    - "CKV_DOCKER_2" # Ensure HEALTHCHECK is used
+    - "CKV_DOCKER_3" # Ensure that a user for the container has been created
+    
+  # Kubernetes checks  
+  kubernetes:
+    - "CKV_K8S_1"  # Process ID (PID) namespace sharing should be disabled
+    - "CKV_K8S_2"  # Privileged containers should be disabled
+    - "CKV_K8S_3"  # HostIPC should be disabled
+    - "CKV_K8S_4"  # HostNetwork should be disabled
+    - "CKV_K8S_5"  # HostPID should be disabled
+    - "CKV_K8S_6"  # Privileged escalation should be disabled
+    - "CKV_K8S_7"  # ReadOnlyRootFilesystem should be set to true
+    - "CKV_K8S_8"  # Liveness probe should be configured
+    - "CKV_K8S_9"  # Readiness probe should be configured
+    - "CKV_K8S_10" # CPU limits should be set
+    - "CKV_K8S_11" # Memory limits should be set
+    - "CKV_K8S_12" # CPU requests should be set
+    - "CKV_K8S_13" # Memory requests should be set
+    - "CKV_K8S_14" # Image tag should be fixed (not latest)
+    - "CKV_K8S_15" # Image pull policy should be set to Always
+    - "CKV_K8S_16" # Container should not be privileged
+    - "CKV_K8S_17" # Containers should not share the host process ID namespace
+    - "CKV_K8S_18" # Containers should not share the host IPC namespace
+    - "CKV_K8S_19" # Containers should not share the host network namespace
+    - "CKV_K8S_20" # Containers should not run with allowPrivilegeEscalation
+    - "CKV_K8S_21" # The default namespace should not be used
+    - "CKV_K8S_22" # Use read-only root filesystem
+    - "CKV_K8S_23" # Minimize the admission of root containers
+    - "CKV_K8S_24" # Do not use the CAP_SYS_ADMIN capability
+    - "CKV_K8S_25" # Minimize the admission of containers with the NET_RAW capability
+
+# Performance settings
+performance:
+  # Parallel processing
+  parallel: 4
+  
+  # Cache settings
+  cache:
+    redis: false
+    mem: "1GB"
+
+# Integration settings
+integration:
+  # GitHub integration
+  github:
+    token: "${GITHUB_TOKEN}"
+    
+  # Azure DevOps integration  
+  azure:
+    token: "${AZURE_DEVOPS_TOKEN}"
+    
+  # Custom webhook for results
+  webhook:
+    url: "${TRIVY_WEBHOOK_URL}"
+    headers:
+      Authorization: "Bearer ${TRIVY_API_TOKEN}"

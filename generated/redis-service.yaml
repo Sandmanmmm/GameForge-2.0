@@ -4,7 +4,7 @@ metadata:
   labels:
     app: redis
   name: redis
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   ports:
   - name: redis

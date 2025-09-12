@@ -4,11 +4,14 @@ metadata:
   labels:
     app: backend
   name: backend
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   ports:
   - name: http
     port: 8000
     targetPort: 8000
+  - name: metrics
+    port: 9090
+    targetPort: 9090
   selector:
     app: backend

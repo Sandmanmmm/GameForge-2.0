@@ -1,31 +1,34 @@
-# GPU-enabled Python Base Image for AI/ML Services
-FROM nvidia/cuda:12.1-devel-ubuntu22.04
+# GPU-enabled Python Base Image for AI/ML Services (Alpine)
+FROM nvidia/cuda:12.1-devel-alpine3.18
 
-# Security: Run as non-root user
-RUN groupadd -r aiuser && useradd -r -g aiuser aiuser
+# Security: Create non-root user (Alpine style)
+RUN addgroup -g 1001 aiuser && \
+    adduser -u 1001 -G aiuser -D -h /home/aiuser -s /bin/sh aiuser
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     PIP_NO_CACHE_DIR=1 \
-    DEBIAN_FRONTEND=noninteractive \
     CUDA_VISIBLE_DEVICES=all
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-dev \
-    python3-pip \
-    build-essential \
+# Install system dependencies (Alpine)
+RUN apk add --no-cache \
+    python3 \
+    python3-dev \
+    py3-pip \
+    gcc \
+    g++ \
+    musl-dev \
+    linux-headers \
+    libffi-dev \
+    openssl-dev \
     curl \
     git \
-    && apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/cache/apk/*
 
 # Create symbolic links for Python
-RUN ln -s /usr/bin/python3.11 /usr/bin/python && \
-    ln -s /usr/bin/python3.11 /usr/bin/python3
+RUN ln -sf /usr/bin/python3 /usr/bin/python
 
 # Set working directory
 WORKDIR /app

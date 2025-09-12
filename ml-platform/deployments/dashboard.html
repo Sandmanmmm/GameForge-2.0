@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GameForge Canary Deployment Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem 0;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            border: 1px solid #e1e8ed;
+        }
+
+        .card h3 {
+            color: #2c3e50;
+            margin-bottom: 1rem;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .deployment-item {
+            background: #f8f9fc;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid #3498db;
+        }
+
+        .deployment-item.active {
+            border-left-color: #2ecc71;
+        }
+
+        .deployment-item.failed {
+            border-left-color: #e74c3c;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-monitoring {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .metric-item {
+            text-align: center;
+            padding: 1rem;
+            background: #f8f9fc;
+            border-radius: 8px;
+        }
+
+        .metric-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .metric-label {
+            font-size: 0.85rem;
+            color: #7f8c8d;
+            margin-top: 0.25rem;
+        }
+
+        .btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            margin: 0.25rem;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #2980b9;
+        }
+
+        .btn-success {
+            background: #2ecc71;
+        }
+
+        .btn-success:hover {
+            background: #27ae60;
+        }
+
+        .btn-danger {
+            background: #e74c3c;
+        }
+
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #ecf0f1;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 1rem 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3498db, #2ecc71);
+            transition: width 0.3s ease;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: #2c3e50;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+
+        .alert-warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+
+        .chart-container {
+            height: 200px;
+            margin-top: 1rem;
+            background: #f8f9fc;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 GameForge Canary Deployment Dashboard</h1>
+        <p>Real-time monitoring and management of ML model deployments</p>
+    </div>
+
+    <div class="container">
+        <div class="dashboard-grid">
+            <!-- Active Deployments -->
+            <div class="card">
+                <h3>Active Deployments</h3>
+                <div id="activeDeployments">
+                    <div class="alert alert-info">
+                        Loading deployments...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Start -->
+            <div class="card">
+                <h3>Start New Deployment</h3>
+                <div class="form-group">
+                    <label>Model Name</label>
+                    <select id="modelName">
+                        <option value="">Select a model...</option>
+                        <option value="game-ai-models">Game AI Models</option>
+                        <option value="npc-behavior">NPC Behavior</option>
+                        <option value="procedural-generation">Procedural Generation</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Current Version</label>
+                    <input type="text" id="currentVersion" placeholder="e.g., v1.0.0">
+                </div>
+                <div class="form-group">
+                    <label>Canary Version</label>
+                    <input type="text" id="canaryVersion" placeholder="e.g., v1.1.0">
+                </div>
+                <div class="form-group">
+                    <label>Initial Traffic %</label>
+                    <input type="number" id="trafficPercentage" value="5" min="1" max="50">
+                </div>
+                <button class="btn btn-success" onclick="startDeployment()">Start Deployment</button>
+            </div>
+
+            <!-- System Metrics -->
+            <div class="card">
+                <h3>System Overview</h3>
+                <div class="metric-grid">
+                    <div class="metric-item">
+                        <div class="metric-value" id="totalDeployments">0</div>
+                        <div class="metric-label">Total Deployments</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" id="activeCount">0</div>
+                        <div class="metric-label">Active</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" id="successRate">0%</div>
+                        <div class="metric-label">Success Rate</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="card">
+                <h3>Recent Activity</h3>
+                <div id="recentActivity">
+                    <div class="alert alert-info">
+                        Loading activity...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Deployment View -->
+        <div class="card" style="margin-top: 2rem;">
+            <h3>Deployment Details</h3>
+            <div id="deploymentDetails">
+                <div class="alert alert-info">
+                    Select a deployment to view details...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API base URL - update this to match your deployment
+        const API_BASE = '/api/v1';
+
+        // Global state
+        let deployments = [];
+        let selectedDeployment = null;
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDeployments();
+            loadSystemMetrics();
+            
+            // Refresh data every 30 seconds
+            setInterval(() => {
+                loadDeployments();
+                loadSystemMetrics();
+            }, 30000);
+        });
+
+        // Load active deployments
+        async function loadDeployments() {
+            try {
+                const response = await fetch(`${API_BASE}/deployments`);
+                deployments = await response.json();
+                renderDeployments();
+            } catch (error) {
+                console.error('Error loading deployments:', error);
+                document.getElementById('activeDeployments').innerHTML = 
+                    '<div class="alert alert-warning">Error loading deployments</div>';
+            }
+        }
+
+        // Render deployments list
+        function renderDeployments() {
+            const container = document.getElementById('activeDeployments');
+            
+            if (deployments.length === 0) {
+                container.innerHTML = '<div class="alert alert-info">No active deployments</div>';
+                return;
+            }
+
+            const html = deployments.map(deployment => `
+                <div class="deployment-item ${deployment.status}" onclick="selectDeployment('${deployment.model_name}')">
+                    <div style="display: flex; justify-content: between; align-items: center;">
+                        <div>
+                            <strong>${deployment.model_name}</strong>
+                            <span class="status-badge status-${deployment.status}">${deployment.status}</span>
+                        </div>
+                        <div style="margin-left: auto;">
+                            ${deployment.traffic_percentage}% traffic
+                        </div>
+                    </div>
+                    <div style="font-size: 0.9rem; color: #666; margin-top: 0.5rem;">
+                        ${deployment.current_version} → ${deployment.canary_version}
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${deployment.traffic_percentage}%"></div>
+                    </div>
+                    <div style="margin-top: 0.5rem;">
+                        <button class="btn btn-success" onclick="promoteDeployment('${deployment.model_name}')" style="margin-right: 0.5rem;">Promote</button>
+                        <button class="btn btn-danger" onclick="rollbackDeployment('${deployment.model_name}')">Rollback</button>
+                    </div>
+                </div>
+            `).join('');
+
+            container.innerHTML = html;
+        }
+
+        // Load system metrics
+        async function loadSystemMetrics() {
+            try {
+                const totalElement = document.getElementById('totalDeployments');
+                const activeElement = document.getElementById('activeCount');
+                const successElement = document.getElementById('successRate');
+
+                totalElement.textContent = deployments.length;
+                activeElement.textContent = deployments.filter(d => d.status === 'active').length;
+                
+                const completedDeployments = deployments.filter(d => d.status === 'completed').length;
+                const successRate = deployments.length > 0 ? 
+                    Math.round((completedDeployments / deployments.length) * 100) : 0;
+                successElement.textContent = `${successRate}%`;
+                
+            } catch (error) {
+                console.error('Error loading metrics:', error);
+            }
+        }
+
+        // Start new deployment
+        async function startDeployment() {
+            const modelName = document.getElementById('modelName').value;
+            const currentVersion = document.getElementById('currentVersion').value;
+            const canaryVersion = document.getElementById('canaryVersion').value;
+            const trafficPercentage = parseInt(document.getElementById('trafficPercentage').value);
+
+            if (!modelName || !currentVersion || !canaryVersion) {
+                alert('Please fill in all required fields');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/deployments`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model_name: modelName,
+                        current_version: currentVersion,
+                        canary_version: canaryVersion,
+                        initial_traffic_percentage: trafficPercentage
+                    })
+                });
+
+                if (response.ok) {
+                    alert('Deployment started successfully!');
+                    loadDeployments();
+                    // Clear form
+                    document.getElementById('modelName').value = '';
+                    document.getElementById('currentVersion').value = '';
+                    document.getElementById('canaryVersion').value = '';
+                    document.getElementById('trafficPercentage').value = '5';
+                } else {
+                    const error = await response.json();
+                    alert(`Error: ${error.detail}`);
+                }
+            } catch (error) {
+                console.error('Error starting deployment:', error);
+                alert('Error starting deployment');
+            }
+        }
+
+        // Promote deployment
+        async function promoteDeployment(modelName) {
+            if (!confirm(`Are you sure you want to promote ${modelName} to production?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/deployments/${modelName}/promote`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    alert('Deployment promoted successfully!');
+                    loadDeployments();
+                } else {
+                    const error = await response.json();
+                    alert(`Error: ${error.detail}`);
+                }
+            } catch (error) {
+                console.error('Error promoting deployment:', error);
+                alert('Error promoting deployment');
+            }
+        }
+
+        // Rollback deployment
+        async function rollbackDeployment(modelName) {
+            if (!confirm(`Are you sure you want to rollback ${modelName}?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/deployments/${modelName}/rollback`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    alert('Deployment rolled back successfully!');
+                    loadDeployments();
+                } else {
+                    const error = await response.json();
+                    alert(`Error: ${error.detail}`);
+                }
+            } catch (error) {
+                console.error('Error rolling back deployment:', error);
+                alert('Error rolling back deployment');
+            }
+        }
+
+        // Select deployment for detailed view
+        async function selectDeployment(modelName) {
+            selectedDeployment = modelName;
+            
+            try {
+                const response = await fetch(`${API_BASE}/deployments/${modelName}`);
+                const deployment = await response.json();
+                
+                const metricsResponse = await fetch(`${API_BASE}/deployments/${modelName}/metrics`);
+                const metrics = await response.json();
+                
+                renderDeploymentDetails(deployment, metrics);
+            } catch (error) {
+                console.error('Error loading deployment details:', error);
+            }
+        }
+
+        // Render deployment details
+        function renderDeploymentDetails(deployment, metrics) {
+            const container = document.getElementById('deploymentDetails');
+            
+            const html = `
+                <h4>${deployment.model_name} Deployment Details</h4>
+                <div class="metric-grid">
+                    <div class="metric-item">
+                        <div class="metric-value">${deployment.traffic_percentage}%</div>
+                        <div class="metric-label">Traffic Split</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value">${deployment.status}</div>
+                        <div class="metric-label">Status</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value">${deployment.canary_version}</div>
+                        <div class="metric-label">Canary Version</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value">${deployment.current_version}</div>
+                        <div class="metric-label">Current Version</div>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    📊 Metrics chart would go here (integrate with Grafana/Prometheus)
+                </div>
+            `;
+            
+            container.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

@@ -9,8 +9,8 @@ ARG BUILD_VERSION=latest
 ARG VARIANT=cpu
 ARG PYTHON_VERSION=3.10
 ARG NODE_VERSION=20
-ARG GPU_BASE_IMAGE=nvcr.io/nvidia/pytorch:23.12-py3
-ARG CPU_BASE_IMAGE=ubuntu:22.04
+ARG GPU_BASE_IMAGE=nvidia/cuda:12.1-runtime-alpine
+ARG CPU_BASE_IMAGE=python:3.10-alpine
 ARG BUILD_ENV=production
 ARG ENABLE_GPU=false
 ARG SECURITY_HARDENING=true
@@ -19,34 +19,39 @@ ARG SECURITY_HARDENING=true
 # Stage 1: Base System Setup
 # ========================================================================
 FROM ${CPU_BASE_IMAGE} AS base-cpu
+
+# GPU base with Python installation (Alpine CUDA doesn't include Python)
 FROM ${GPU_BASE_IMAGE} AS base-gpu
+RUN apk add --no-cache \
+        python3 \
+        python3-dev \
+        py3-pip \
+        && ln -sf python3 /usr/bin/python
 
 # Select base based on variant
 FROM base-${VARIANT} AS base-system
 
-# Prevent interactive prompts
-ENV DEBIAN_FRONTEND=noninteractive
+# Alpine-specific environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PIP_NO_CACHE_DIR=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Security: Create non-root user
-RUN groupadd -g 1001 gameforge && \
-    useradd -u 1001 -g gameforge -m -s /bin/bash gameforge
+# Security: Create non-root user (Alpine style)
+RUN addgroup -g 1001 gameforge && \
+    adduser -u 1001 -G gameforge -D -h /home/gameforge -s /bin/sh gameforge
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python${PYTHON_VERSION} \
-    python${PYTHON_VERSION}-dev \
-    python3-pip \
-    python3-venv \
+# Install system dependencies (Alpine style)
+RUN apk add --no-cache \
+    python3 \
+    python3-dev \
+    py3-pip \
     curl \
     wget \
     git \
-    build-essential \
+    build-base \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    linux-headers
 
 # ========================================================================
 # Stage 2: Python Dependencies
@@ -109,35 +114,33 @@ USER gameforge
 CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "src/main.py"]
 
 # ========================================================================
-# Stage 6: Production Target
+# Stage 6: Production Target (Distroless)
 # ========================================================================
-FROM app-base AS production
+FROM gcr.io/distroless/python3-debian12:nonroot AS production
 
-# Security hardening (if enabled)
-RUN if [ "$SECURITY_HARDENING" = "true" ]; then \
-        # Remove unnecessary packages
-        apt-get remove -y git build-essential && \
-        apt-get autoremove -y && \
-        # Remove cache and temp files
-        rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* ~/.cache; \
-    fi
+# Copy Python virtual environment from previous stage
+COPY --from=python-deps /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy application code with proper ownership
+COPY --from=app-base --chown=nonroot:nonroot /app /app
+
+# Set working directory
+WORKDIR /app
 
 # Set production environment
 ENV GAMEFORGE_ENV=production
 ENV LOG_LEVEL=info
+ENV PYTHONPATH=/app
 
-# Security: Switch to non-root user
-USER gameforge
-
-# Health check
-COPY --chown=gameforge:gameforge scripts/healthcheck.sh /app/healthcheck.sh
-RUN chmod +x /app/healthcheck.sh
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD /app/healthcheck.sh
-
+# Expose port
 EXPOSE 8080
-CMD ["python", "src/main.py"]
+
+# Use nonroot user (distroless default)
+USER nonroot
+
+# Run application
+ENTRYPOINT ["python", "src/main.py"]
 
 # ========================================================================
 # Stage 7: GPU Inference Target

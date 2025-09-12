@@ -1,0 +1,125 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "GameForge Security Dashboard",
+    "tags": ["security", "vulnerabilities"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Critical Vulnerabilities",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "sum(vulnerability_scanner_critical_count)",
+            "format": "time_series",
+            "legendFormat": "Critical"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": 0},
+                {"color": "red", "value": 1}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "High Vulnerabilities",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "sum(vulnerability_scanner_high_count)",
+            "format": "time_series",
+            "legendFormat": "High"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 5},
+                {"color": "red", "value": 10}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Vulnerability Trends",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "vulnerability_scanner_critical_count",
+            "legendFormat": "Critical"
+          },
+          {
+            "expr": "vulnerability_scanner_high_count",
+            "legendFormat": "High"
+          },
+          {
+            "expr": "vulnerability_scanner_medium_count",
+            "legendFormat": "Medium"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "Security Scan Status",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "vulnerability_scan_info",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Top Vulnerable Images",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "topk(10, sum by (image) (vulnerability_scanner_total_count))",
+            "legendFormat": "{{ image }}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Security Policy Violations",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(security_policy_violations_total[5m])",
+            "legendFormat": "{{ policy }}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      }
+    ],
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}

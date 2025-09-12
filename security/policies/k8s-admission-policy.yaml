@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: image-security-policy
+  namespace: gameforge-system
+data:
+  policy.yaml: |
+    apiVersion: kyverno.io/v1
+    kind: ClusterPolicy
+    metadata:
+      name: gameforge-image-security
+    spec:
+      validationFailureAction: enforce
+      background: true
+      rules:
+      - name: check-image-vulnerability
+        match:
+          any:
+          - resources:
+              kinds:
+              - Pod
+              - Deployment
+              - StatefulSet
+              - DaemonSet
+        validate:
+          message: "Image must pass vulnerability scan"
+          pattern:
+            metadata:
+              annotations:
+                "security.gameforge.com/scan-status": "passed"
+                "security.gameforge.com/critical-vulns": "0"
+
+      - name: require-image-signature
+        match:
+          any:
+          - resources:
+              kinds:
+              - Pod
+        validate:
+          message: "Images must be signed"
+          pattern:
+            metadata:
+              annotations:
+                "cosign.sigstore.dev/signature": "*"
+
+      - name: disallow-latest-tag
+        match:
+          any:
+          - resources:
+              kinds:
+              - Pod
+        validate:
+          message: "Latest tag is not allowed in production"
+          pattern:
+            spec:
+              =(securityContext):
+                =(runAsNonRoot): true
+              containers:
+              - image: "!*:latest"
+
+      - name: require-security-context
+        match:
+          any:
+          - resources:
+              kinds:
+              - Pod
+        validate:
+          message: "Security context is required"
+          pattern:
+            spec:
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: ">0"
+              containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop:
+                    - ALL

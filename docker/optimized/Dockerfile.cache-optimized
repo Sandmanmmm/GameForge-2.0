@@ -1,0 +1,85 @@
+# Docker BuildKit Build Configuration
+# Optimized multi-stage builds with advanced caching
+
+# syntax=docker/dockerfile:1.6-labs
+
+# Build arguments for cache optimization
+ARG BUILDKIT_INLINE_CACHE=1
+ARG BUILDKIT_MULTI_PLATFORM=1
+ARG CACHE_FROM=""
+ARG CACHE_TO=""
+
+# Enable BuildKit experimental features
+# buildkit:experimental=true
+
+FROM --platform=$BUILDPLATFORM python:3.10-alpine AS cache-mount-example
+# Use cache mounts for package managers
+RUN --mount=type=cache,target=/var/cache/apk \
+    --mount=type=cache,target=/root/.cache/pip \
+    apk add --no-cache git gcc musl-dev && \
+    pip install --no-cache-dir wheel setuptools
+
+# Multi-stage build with shared cache layers
+FROM --platform=$BUILDPLATFORM node:20-alpine AS node-cache-base
+WORKDIR /app
+# Cache node_modules separately from source code
+COPY frontend/package*.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --only=production
+
+FROM node-cache-base AS node-build
+# Mount source code without copying to leverage cache
+RUN --mount=type=bind,source=frontend,target=/src \
+    --mount=type=cache,target=/root/.npm \
+    cp -r /src/* . && \
+    npm run build
+
+# Python dependencies with cache mounts
+FROM --platform=$BUILDPLATFORM python:3.10-alpine AS python-cache-base  
+WORKDIR /app
+
+# Install system dependencies with cache
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add --no-cache \
+        gcc \
+        musl-dev \
+        libffi-dev \
+        openssl-dev
+
+# Cache pip downloads and builds
+COPY requirements*.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/tmp/pip-build \
+    pip install --user --no-warn-script-location \
+    --cache-dir=/root/.cache/pip \
+    --build=/tmp/pip-build \
+    -r requirements.txt
+
+# Production stage with optimized layers
+FROM python:3.10-alpine AS production-optimized
+
+# Copy only necessary artifacts from cache stages
+COPY --from=python-cache-base /root/.local /root/.local
+COPY --from=node-build /app/dist /app/static
+
+# Security and runtime setup (single layer)
+RUN addgroup -g 1001 gameforge && \
+    adduser -u 1001 -G gameforge -D -h /app -s /bin/sh gameforge && \
+    mkdir -p /app/logs /app/data && \
+    chown -R gameforge:gameforge /app
+
+# Runtime configuration
+WORKDIR /app
+USER gameforge
+ENV PATH="/root/.local/bin:$PATH"
+ENV PYTHONPATH="/app"
+
+# Health check (separate layer for easier updates)
+COPY --chown=gameforge:gameforge scripts/healthcheck.sh /app/
+RUN chmod +x /app/healthcheck.sh
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /app/healthcheck.sh
+
+EXPOSE 8080
+CMD ["python", "src/main.py"]

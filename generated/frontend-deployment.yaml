@@ -3,10 +3,10 @@ kind: Deployment
 metadata:
   labels:
     app: frontend
-    app.kubernetes.io/component: web
+    app.kubernetes.io/component: service
     app.kubernetes.io/name: frontend
   name: frontend
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   replicas: 3
   selector:
@@ -18,28 +18,12 @@ spec:
         app: frontend
     spec:
       containers:
-      - env:
-        - name: NODE_ENV
-          value: production
-        - name: API_URL
-          value: http://backend:8000
-        image: ${registry}/frontend-hardened
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 3000
-          initialDelaySeconds: 10
-          periodSeconds: 30
+      - env: []
+        image: gcr.io/distroless/nodejs18-debian11
         name: frontend
         ports:
         - containerPort: 3000
           name: http
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 3000
-          initialDelaySeconds: 10
-          periodSeconds: 30
         resources:
           limits:
             cpu: 500m
@@ -54,13 +38,7 @@ spec:
             - ALL
           readOnlyRootFilesystem: true
           runAsNonRoot: true
-        volumeMounts:
-        - mountPath: /tmp
-          name: tmp
       securityContext:
         fsGroup: 1001
         runAsGroup: 1001
         runAsUser: 1001
-      volumes:
-      - emptyDir: {}
-        name: tmp

@@ -1,0 +1,293 @@
+# Enhanced Security Gates Pipeline
+# Trivy + Conftest + OPA Policy Validation
+
+name: Security Gates
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'Dockerfile*'
+      - 'docker-compose*.yml'
+      - 'k8s/**'
+      - 'generated/**'
+      - 'security/policies/**'
+  pull_request:
+    branches: [ main ]
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Container image tag to scan'
+        required: true
+        type: string
+      target_platform:
+        description: 'Target platform (linux/amd64, linux/arm64)'
+        required: false
+        type: string
+        default: 'linux/amd64'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  TRIVY_CACHE_DIR: .trivy-cache
+
+jobs:
+  # ========================================================================
+  # Policy Validation (Conftest + OPA)
+  # ========================================================================
+  policy-validation:
+    name: Policy Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Conftest
+      run: |
+        # Install Conftest
+        curl -L -o conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v0.46.0/conftest_0.46.0_Linux_x86_64.tar.gz"
+        tar xzf conftest.tar.gz
+        sudo mv conftest /usr/local/bin/
+        rm conftest.tar.gz
+        conftest --version
+    
+    - name: Validate Dockerfile policies
+      run: |
+        echo "🔍 Validating Dockerfile security policies..."
+        find . -name "Dockerfile*" -type f | while read dockerfile; do
+          echo "Checking: $dockerfile"
+          conftest verify --policy security/policies/conftest/dockerfile-security.rego "$dockerfile" || exit 1
+        done
+    
+    - name: Validate Kubernetes manifests
+      run: |
+        echo "🔍 Validating Kubernetes manifest policies..."
+        
+        # Check generated manifests
+        if [ -d "generated" ]; then
+          find generated -name "*.yaml" -o -name "*.yml" | while read manifest; do
+            echo "Checking: $manifest"
+            conftest verify --policy security/policies/conftest/kubernetes-security.rego "$manifest" || exit 1
+          done
+        fi
+        
+        # Check k8s directory
+        if [ -d "k8s" ]; then
+          find k8s -name "*.yaml" -o -name "*.yml" | while read manifest; do
+            echo "Checking: $manifest"
+            conftest verify --policy security/policies/conftest/kubernetes-security.rego "$manifest" || exit 1
+          done
+        fi
+    
+    - name: Validate Docker Compose files
+      run: |
+        echo "🔍 Validating Docker Compose policies..."
+        find . -name "docker-compose*.yml" -type f | while read compose; do
+          echo "Checking: $compose"
+          # Convert compose to individual container configs for validation
+          docker-compose -f "$compose" config | conftest verify --policy security/policies/conftest/kubernetes-security.rego - || exit 1
+        done
+      continue-on-error: true # Docker Compose validation is informational
+    
+    - name: OPA Policy Testing
+      run: |
+        echo "🧪 Testing OPA policies..."
+        
+        # Install OPA
+        curl -L -o opa https://openpolicyagent.org/downloads/v0.58.0/opa_linux_amd64_static
+        chmod +x opa
+        sudo mv opa /usr/local/bin/
+        
+        # Test OPA policies
+        opa test security/policies/opa/ --verbose || exit 1
+    
+    - name: Generate Policy Report
+      run: |
+        echo "📊 Generating policy compliance report..."
+        mkdir -p security/reports
+        
+        {
+          echo "# Security Policy Compliance Report"
+          echo "Generated: $(date)"
+          echo "Commit: ${{ github.sha }}"
+          echo ""
+          echo "## Dockerfile Policies: ✅ PASSED"
+          echo "## Kubernetes Policies: ✅ PASSED" 
+          echo "## OPA Tests: ✅ PASSED"
+          echo ""
+          echo "All security policies validated successfully!"
+        } > security/reports/policy-compliance-${{ github.sha }}.md
+    
+    - name: Upload Policy Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: policy-compliance-report
+        path: security/reports/policy-compliance-*.md
+        retention-days: 30
+
+  # ========================================================================
+  # Advanced Trivy Scanning
+  # ========================================================================
+  trivy-comprehensive-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+    needs: policy-validation
+    
+    strategy:
+      matrix:
+        scan-type: [filesystem, config, secret]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Trivy Cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.TRIVY_CACHE_DIR }}
+        key: trivy-cache-${{ runner.os }}-${{ github.sha }}
+        restore-keys: |
+          trivy-cache-${{ runner.os }}-
+    
+    - name: Run Trivy ${{ matrix.scan-type }} scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: ${{ matrix.scan-type }}
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-${{ matrix.scan-type }}-results.sarif'
+        severity: 'CRITICAL,HIGH,MEDIUM'
+        exit-code: 1
+        trivy-config: 'security/trivy.yaml'
+    
+    - name: Upload Trivy scan results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-${{ matrix.scan-type }}-results.sarif'
+        category: 'trivy-${{ matrix.scan-type }}'
+    
+    - name: Generate detailed report
+      if: always()
+      run: |
+        mkdir -p security/reports
+        trivy ${{ matrix.scan-type }} . \
+          --format json \
+          --output security/reports/trivy-${{ matrix.scan-type }}-${{ github.sha }}.json \
+          --config security/trivy.yaml
+    
+    - name: Upload detailed reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: trivy-${{ matrix.scan-type }}-report
+        path: security/reports/trivy-${{ matrix.scan-type }}-*.json
+        retention-days: 30
+
+  # ========================================================================
+  # Container Image Security Gate
+  # ========================================================================
+  container-security-gate:
+    name: Container Security Gate
+    runs-on: ubuntu-latest
+    needs: [policy-validation, trivy-comprehensive-scan]
+    if: inputs.image_tag != '' || github.event_name == 'workflow_call'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Trivy Cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.TRIVY_CACHE_DIR }}
+        key: trivy-cache-${{ runner.os }}-${{ github.sha }}
+        restore-keys: |
+          trivy-cache-${{ runner.os }}-
+    
+    - name: Scan container image
+      env:
+        IMAGE_TAG: ${{ inputs.image_tag || format('{0}/{1}:latest', env.REGISTRY, env.IMAGE_NAME) }}
+      run: |
+        echo "🔍 Scanning container image: $IMAGE_TAG"
+        
+        # Comprehensive container scan
+        trivy image \
+          --severity CRITICAL,HIGH \
+          --exit-code 1 \
+          --format sarif \
+          --output security/reports/container-scan-${{ github.sha }}.sarif \
+          --config security/trivy.yaml \
+          "$IMAGE_TAG"
+    
+    - name: Check image signing (Cosign)
+      env:
+        IMAGE_TAG: ${{ inputs.image_tag || format('{0}/{1}:latest', env.REGISTRY, env.IMAGE_NAME) }}
+      run: |
+        echo "🔐 Checking image signatures..."
+        
+        # Install cosign
+        curl -O -L "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"
+        sudo mv cosign-linux-amd64 /usr/local/bin/cosign
+        sudo chmod +x /usr/local/bin/cosign
+        
+        # Verify signature (if signed)
+        cosign verify "$IMAGE_TAG" || echo "⚠️ Image not signed (acceptable for development)"
+    
+    - name: Upload container scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'security/reports/container-scan-${{ github.sha }}.sarif'
+        category: 'container-security'
+
+  # ========================================================================
+  # Security Gate Summary
+  # ========================================================================
+  security-gate-summary:
+    name: Security Gate Summary
+    runs-on: ubuntu-latest
+    needs: [policy-validation, trivy-comprehensive-scan, container-security-gate]
+    if: always()
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+    
+    - name: Generate security summary
+      run: |
+        echo "🛡️ Security Gates Summary" >> $GITHUB_STEP_SUMMARY
+        echo "=========================" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ needs.policy-validation.result }}" == "success" ]; then
+          echo "✅ Policy Validation: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Policy Validation: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.trivy-comprehensive-scan.result }}" == "success" ]; then
+          echo "✅ Trivy Security Scan: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Trivy Security Scan: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.container-security-gate.result }}" == "success" ] || [ "${{ needs.container-security-gate.result }}" == "skipped" ]; then
+          echo "✅ Container Security Gate: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Container Security Gate: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "Timestamp: $(date)" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Fail if any security gate failed
+      if: |
+        needs.policy-validation.result == 'failure' ||
+        needs.trivy-comprehensive-scan.result == 'failure' ||
+        needs.container-security-gate.result == 'failure'
+      run: |
+        echo "❌ One or more security gates failed!"
+        exit 1

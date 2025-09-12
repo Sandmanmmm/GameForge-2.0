@@ -3,12 +3,12 @@ kind: Deployment
 metadata:
   labels:
     app: backend
-    app.kubernetes.io/component: api
+    app.kubernetes.io/component: service
     app.kubernetes.io/name: backend
   name: backend
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
       app: backend
@@ -19,29 +19,17 @@ spec:
     spec:
       containers:
       - env:
-        - name: FLASK_ENV
-          value: production
         - name: DATABASE_URL
-          value: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/gameforge
+          value_from_secret: postgres-credentials
         - name: REDIS_URL
-          value: redis://redis:6379/0
-        image: ${registry}/backend-hardened
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 15
-          periodSeconds: 30
+          value: redis://redis:6379
+        image: gcr.io/distroless/python3-debian11
         name: backend
         ports:
         - containerPort: 8000
           name: http
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 15
-          periodSeconds: 30
+        - containerPort: 9090
+          name: metrics
         resources:
           limits:
             cpu: 1000m
@@ -56,17 +44,7 @@ spec:
             - ALL
           readOnlyRootFilesystem: true
           runAsNonRoot: true
-        volumeMounts:
-        - mountPath: /tmp
-          name: tmp
-        - mountPath: /app/logs
-          name: logs
       securityContext:
         fsGroup: 1001
         runAsGroup: 1001
         runAsUser: 1001
-      volumes:
-      - emptyDir: {}
-        name: tmp
-      - emptyDir: {}
-        name: logs

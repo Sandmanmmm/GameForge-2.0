@@ -1,25 +1,19 @@
 version: '3.8'
 services:
   frontend:
-    image: ${registry}/frontend-hardened
+    image: gcr.io/distroless/nodejs18-debian11
     container_name: gameforge_frontend
     restart: unless-stopped
     networks:
     - gameforge
     ports:
     - 3000:3000
-    environment:
-      NODE_ENV: production
-      API_URL: http://backend:8000
-    volumes: []
-    tmpfs:
-    - /tmp
     healthcheck:
       test: curl -f http://localhost:3000/health || exit 1
       interval: 30s
       timeout: 3s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -30,27 +24,25 @@ services:
           memory: 128Mi
       replicas: 3
   backend:
-    image: ${registry}/backend-hardened
+    image: gcr.io/distroless/python3-debian11
     container_name: gameforge_backend
     restart: unless-stopped
     networks:
     - gameforge
     ports:
     - 8000:8000
+    - 9090:9090
     environment:
-      FLASK_ENV: production
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/gameforge
-      REDIS_URL: redis://redis:6379/0
-    volumes: []
-    tmpfs:
-    - /tmp
-    - /app/logs
+    - name: DATABASE_URL
+      value_from_secret: postgres-credentials
+    - name: REDIS_URL
+      value: redis://redis:6379
     healthcheck:
-      test: curl -f http://localhost:8000/health || exit 1
+      test: curl -f http://localhost:8000/api/health || exit 1
       interval: 30s
       timeout: 3s
       retries: 3
-      start_period: 15s
+      start_period: 60s
     deploy:
       resources:
         limits:
@@ -59,43 +51,40 @@ services:
         reservations:
           cpus: '200'
           memory: 256Mi
-      replicas: 2
+      replicas: 3
   ai-inference:
-    image: ${registry}/ai-inference-hardened
+    image: nvidia/cuda:12.1-runtime-alpine
     container_name: gameforge_ai-inference
     restart: unless-stopped
     networks:
     - gameforge
     ports:
+    - 50051:50051
     - 8001:8001
-    environment:
-      CUDA_VISIBLE_DEVICES: '0'
-      MODEL_PATH: /models
     volumes:
-    - ai-inference_models:/models
-    tmpfs:
-    - /tmp
+    - ai-inference_models:/app/models
     healthcheck:
       test: curl -f http://localhost:8001/health || exit 1
-      interval: 60s
+      interval: 30s
       timeout: 3s
       retries: 3
-      start_period: 30s
+      start_period: 120s
     deploy:
       resources:
         limits:
-          cpus: '2000'
-          memory: 8Gi
+          cpus: '4000'
+          memory: 16Gi
         reservations:
-          cpus: '500'
-          memory: 2Gi
+          cpus: '1000'
+          memory: 4Gi
           devices:
           - driver: nvidia
             count: 1
             capabilities:
             - gpu
+      replicas: 2
   postgres:
-    image: postgres:16-alpine
+    image: postgres:15-alpine
     container_name: gameforge_postgres
     restart: unless-stopped
     networks:
@@ -103,19 +92,22 @@ services:
     ports:
     - 5432:5432
     environment:
-      POSTGRES_DB: gameforge
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    - name: POSTGRES_DB
+      value: gameforge
+    - name: POSTGRES_USER
+      value_from_secret: postgres-credentials
+    - name: POSTGRES_PASSWORD
+      value_from_secret: postgres-credentials
     volumes:
-    - postgres_postgres-data:/var/lib/postgresql/data
+    - postgres_data:/var/lib/postgresql/data
     deploy:
       resources:
         limits:
-          cpus: '1000'
-          memory: 2Gi
+          cpus: '2000'
+          memory: 4Gi
         reservations:
-          cpus: '200'
-          memory: 512Mi
+          cpus: '500'
+          memory: 1Gi
   redis:
     image: redis:7-alpine
     container_name: gameforge_redis
@@ -125,7 +117,7 @@ services:
     ports:
     - 6379:6379
     volumes:
-    - redis_redis-data:/data
+    - redis_data:/data
     deploy:
       resources:
         limits:
@@ -135,7 +127,7 @@ services:
           cpus: '100'
           memory: 128Mi
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.45.0
     container_name: gameforge_prometheus
     restart: unless-stopped
     networks:
@@ -143,7 +135,41 @@ services:
     ports:
     - 9090:9090
     volumes:
-    - prometheus_prometheus-data:/prometheus
+    - prometheus_data:/prometheus
+    - ./config/prometheus:/etc/prometheus:ro
+    healthcheck:
+      test: curl -f http://localhost:9090/-/healthy || exit 1
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1000'
+          memory: 2Gi
+        reservations:
+          cpus: '200'
+          memory: 512Mi
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: gameforge_grafana
+    restart: unless-stopped
+    networks:
+    - gameforge
+    ports:
+    - 3000:3000
+    environment:
+    - name: GF_SECURITY_ADMIN_PASSWORD
+      value_from_secret: grafana-credentials
+    volumes:
+    - grafana_data:/var/lib/grafana
+    healthcheck:
+      test: curl -f http://localhost:3000/api/health || exit 1
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -152,36 +178,16 @@ services:
         reservations:
           cpus: '100'
           memory: 256Mi
-  grafana:
-    image: grafana/grafana:latest-alpine
-    container_name: gameforge_grafana
-    restart: unless-stopped
-    networks:
-    - gameforge
-    ports:
-    - 3001:3000
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
-    volumes:
-    - grafana_grafana-data:/var/lib/grafana
-    deploy:
-      resources:
-        limits:
-          cpus: '500'
-          memory: 512Mi
-        reservations:
-          cpus: '100'
-          memory: 128Mi
 volumes:
   ai-inference_models:
     driver: local
-  postgres_postgres-data:
+  postgres_data:
     driver: local
-  redis_redis-data:
+  redis_data:
     driver: local
-  prometheus_prometheus-data:
+  prometheus_data:
     driver: local
-  grafana_grafana-data:
+  grafana_data:
     driver: local
 networks:
   gameforge:

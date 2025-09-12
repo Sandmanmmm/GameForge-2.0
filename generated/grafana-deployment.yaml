@@ -3,10 +3,10 @@ kind: Deployment
 metadata:
   labels:
     app: grafana
-    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/component: service
     app.kubernetes.io/name: grafana
   name: grafana
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   replicas: 1
   selector:
@@ -20,19 +20,19 @@ spec:
       containers:
       - env:
         - name: GF_SECURITY_ADMIN_PASSWORD
-          value: ${GRAFANA_PASSWORD}
-        image: grafana/grafana:latest-alpine
+          value_from_secret: grafana-credentials
+        image: grafana/grafana:10.1.0
         name: grafana
         ports:
         - containerPort: 3000
-          name: http
+          name: web
         resources:
           limits:
             cpu: 500m
-            memory: 512Mi
+            memory: 1Gi
           requests:
             cpu: 100m
-            memory: 128Mi
+            memory: 256Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -42,12 +42,12 @@ spec:
           runAsNonRoot: true
         volumeMounts:
         - mountPath: /var/lib/grafana
-          name: grafana-data
+          name: data
       securityContext:
         fsGroup: 1001
         runAsGroup: 1001
         runAsUser: 1001
       volumes:
-      - name: grafana-data
+      - name: data
         persistentVolumeClaim:
-          claimName: grafana-grafana-data
+          claimName: grafana-data

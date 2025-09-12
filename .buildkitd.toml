@@ -1,0 +1,91 @@
+# Docker BuildKit Configuration
+# Advanced caching and optimization settings
+
+[worker.oci]
+  enabled = true
+  platforms = ["linux/amd64", "linux/arm64"]
+
+[worker.containerd]
+  enabled = true
+  platforms = ["linux/amd64", "linux/arm64"]
+  namespace = "buildkit"
+
+# Registry configuration for cache storage
+[registry."ghcr.io"]
+  mirrors = ["ghcr.io"]
+  http = false
+  insecure = false
+
+# Build cache configuration
+[cache]
+  # Enable inline cache
+  inline = true
+  
+  # Registry cache configuration
+  [cache.registry]
+    ref = "ghcr.io/sandmanmmm/ai-game-production-p/buildcache"
+    mode = "max"
+    compression = "gzip"
+    
+  # GitHub Actions cache
+  [cache.gha]
+    enabled = true
+    scope = "default"
+    
+  # Local cache
+  [cache.local]
+    enabled = true
+    dest = "/tmp/buildkit-cache"
+    
+# Security configurations
+[security]
+  # Enable security scanning during build
+  scan = true
+  
+  # Attestation and SBOM generation
+  [security.attestation]
+    enabled = true
+    type = "slsa"
+    
+  [security.sbom]
+    enabled = true
+    format = "spdx-json"
+
+# Build optimizations
+[build]
+  # Multi-stage build optimizations
+  [build.optimization]
+    # Enable layer caching
+    layer_cache = true
+    
+    # Optimize dockerfile instructions
+    optimize_instructions = true
+    
+    # Enable build-time secret management
+    secret_mount = true
+    
+  # Parallel build settings
+  [build.parallel]
+    max_workers = 4
+    stage_concurrency = 2
+    
+# Export settings
+[export]
+  # Compression for layers
+  compression = "gzip"
+  compression_level = 6
+  
+  # Multi-platform manifest
+  multi_platform = true
+  
+# Network configuration
+[network]
+  mode = "host"
+  
+# Frontend configuration
+[frontend.dockerfile]
+  # Dockerfile version
+  version = "dockerfile.v0"
+  
+  # Enable experimental features
+  experimental = true

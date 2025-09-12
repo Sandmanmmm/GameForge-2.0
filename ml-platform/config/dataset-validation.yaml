@@ -1,0 +1,279 @@
+# GameForge Dataset Validation Configuration
+# ==========================================
+
+# Global validation settings
+global_settings:
+  enable_validation: true
+  fail_on_errors: true
+  warn_on_warnings: true
+  validation_timeout_minutes: 30
+  max_file_size_mb: 1024
+
+# Dataset-specific validation rules
+datasets:
+  game-ai-models:
+    description: "Game AI training datasets"
+    validation_rules:
+      - rule_type: "row_count"
+        condition: "min"
+        threshold: 1000
+        severity: "error"
+        
+      - rule_type: "row_count"
+        condition: "max"
+        threshold: 10000000
+        severity: "warning"
+        
+      - rule_type: "schema"
+        threshold: ["player_id", "action", "reward", "state_vector", "timestamp"]
+        severity: "error"
+        
+      - rule_type: "not_null"
+        column: "player_id"
+        severity: "error"
+        
+      - rule_type: "not_null"
+        column: "action"
+        severity: "error"
+        
+      - rule_type: "range"
+        column: "reward"
+        condition: "min"
+        threshold: -1.0
+        severity: "warning"
+        
+      - rule_type: "range"
+        column: "reward"
+        condition: "max"
+        threshold: 1.0
+        severity: "warning"
+        
+      - rule_type: "unique"
+        column: "player_id"
+        severity: "warning"
+        
+    quality_metrics:
+      - completeness_threshold: 0.95
+      - consistency_threshold: 0.90
+      - validity_threshold: 0.98
+      
+  npc-behavior:
+    description: "NPC behavior pattern datasets"
+    validation_rules:
+      - rule_type: "row_count"
+        condition: "min"
+        threshold: 500
+        severity: "error"
+        
+      - rule_type: "schema"
+        threshold: ["npc_id", "behavior_type", "context", "response", "effectiveness"]
+        severity: "error"
+        
+      - rule_type: "not_null"
+        column: "npc_id"
+        severity: "error"
+        
+      - rule_type: "not_null"
+        column: "behavior_type"
+        severity: "error"
+        
+      - rule_type: "range"
+        column: "effectiveness"
+        condition: "min"
+        threshold: 0.0
+        severity: "error"
+        
+      - rule_type: "range"
+        column: "effectiveness"
+        condition: "max"
+        threshold: 1.0
+        severity: "error"
+        
+    quality_metrics:
+      - completeness_threshold: 0.98
+      - consistency_threshold: 0.95
+      - validity_threshold: 0.99
+      
+  procedural-generation:
+    description: "Procedural content generation datasets"
+    validation_rules:
+      - rule_type: "row_count"
+        condition: "min"
+        threshold: 100
+        severity: "error"
+        
+      - rule_type: "schema"
+        threshold: ["seed", "parameters", "output_type", "quality_score", "generation_time"]
+        severity: "error"
+        
+      - rule_type: "not_null"
+        column: "seed"
+        severity: "error"
+        
+      - rule_type: "not_null"
+        column: "parameters"
+        severity: "error"
+        
+      - rule_type: "range"
+        column: "quality_score"
+        condition: "min"
+        threshold: 0.0
+        severity: "warning"
+        
+      - rule_type: "range"
+        column: "quality_score"
+        condition: "max"
+        threshold: 1.0
+        severity: "warning"
+        
+      - rule_type: "range"
+        column: "generation_time"
+        condition: "min"
+        threshold: 0.0
+        severity: "error"
+        
+    quality_metrics:
+      - completeness_threshold: 0.90
+      - consistency_threshold: 0.85
+      - validity_threshold: 0.95
+      
+  training-images:
+    description: "Image datasets for computer vision models"
+    validation_rules:
+      - rule_type: "row_count"
+        condition: "min"
+        threshold: 1000
+        severity: "error"
+        
+      - rule_type: "schema"
+        threshold: ["image_path", "label", "width", "height", "channels"]
+        severity: "error"
+        
+      - rule_type: "not_null"
+        column: "image_path"
+        severity: "error"
+        
+      - rule_type: "not_null"
+        column: "label"
+        severity: "error"
+        
+      - rule_type: "range"
+        column: "width"
+        condition: "min"
+        threshold: 32
+        severity: "warning"
+        
+      - rule_type: "range"
+        column: "height"
+        condition: "min"
+        threshold: 32
+        severity: "warning"
+        
+      - rule_type: "range"
+        column: "channels"
+        condition: "min"
+        threshold: 1
+        severity: "error"
+        
+      - rule_type: "range"
+        column: "channels"
+        condition: "max"
+        threshold: 4
+        severity: "error"
+        
+    quality_metrics:
+      - completeness_threshold: 0.99
+      - consistency_threshold: 0.95
+      - validity_threshold: 0.98
+
+# Common validation rules that apply to all datasets
+common_rules:
+  - rule_type: "file_size"
+    condition: "max"
+    threshold: 1073741824  # 1GB
+    severity: "warning"
+    
+  - rule_type: "encoding"
+    threshold: "utf-8"
+    severity: "error"
+
+# Data drift detection settings
+drift_detection:
+  enable_automatic_drift_detection: true
+  drift_check_interval_hours: 24
+  statistical_significance: 0.05
+  
+  thresholds:
+    no_drift: 0.1
+    minor_drift: 0.3
+    moderate_drift: 0.6
+    severe_drift: 0.8
+    
+  methods:
+    numerical:
+      - "kolmogorov_smirnov"
+      - "mann_whitney_u"
+      - "t_test"
+      
+    categorical:
+      - "chi_square"
+      - "population_stability_index"
+      
+# Data quality scoring
+quality_scoring:
+  weights:
+    completeness: 0.25
+    consistency: 0.25
+    validity: 0.25
+    uniqueness: 0.15
+    timeliness: 0.10
+    
+  scoring_method: "weighted_average"
+  
+  grade_thresholds:
+    excellent: 0.95
+    good: 0.85
+    fair: 0.70
+    poor: 0.50
+
+# Monitoring and alerting
+monitoring:
+  enable_alerts: true
+  alert_channels:
+    - slack
+    - email
+    - webhook
+    
+  alert_conditions:
+    validation_failure:
+      severity: "error"
+      threshold: 1
+      
+    quality_degradation:
+      severity: "warning"
+      threshold: 0.80
+      
+    severe_drift:
+      severity: "error"
+      drift_score_threshold: 0.8
+      
+    moderate_drift:
+      severity: "warning"
+      drift_score_threshold: 0.6
+      
+  notification_settings:
+    batch_alerts: true
+    batch_interval_minutes: 30
+    max_alerts_per_hour: 10
+
+# Storage and caching
+storage:
+  cache_validation_results: true
+  cache_ttl_hours: 24
+  compress_large_datasets: true
+  compression_threshold_mb: 100
+  
+  retention:
+    validation_results_days: 90
+    drift_analysis_days: 365
+    quality_metrics_days: 180

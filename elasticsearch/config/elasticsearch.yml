@@ -1,7 +1,0 @@
-cluster.name: gameforge-cluster
-node.name: ${NODE_NAME}
-network.host: 0.0.0.0
-http.port: 9200
-discovery.zen.minimum_master_nodes: 1
-index.number_of_shards: 1
-index.number_of_replicas: 0

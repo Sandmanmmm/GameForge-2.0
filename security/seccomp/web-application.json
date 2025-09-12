@@ -1,0 +1,133 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": [
+        "SCMP_ARCH_X86",
+        "SCMP_ARCH_X32"
+      ]
+    },
+    {
+      "architecture": "SCMP_ARCH_AARCH64",
+      "subArchitectures": [
+        "SCMP_ARCH_ARM"
+      ]
+    }
+  ],
+  "syscalls": [
+    {
+      "names": [
+        "accept",
+        "accept4",
+        "access",
+        "bind",
+        "brk",
+        "chdir",
+        "close",
+        "connect",
+        "dup",
+        "dup2",
+        "dup3",
+        "epoll_create",
+        "epoll_create1",
+        "epoll_ctl",
+        "epoll_wait",
+        "eventfd",
+        "eventfd2",
+        "execve",
+        "exit",
+        "exit_group",
+        "faccessat",
+        "fchdir",
+        "fcntl",
+        "fcntl64",
+        "fdatasync",
+        "flock",
+        "fork",
+        "fstat",
+        "fstat64",
+        "fstatfs",
+        "fsync",
+        "ftruncate",
+        "ftruncate64",
+        "futex",
+        "getcwd",
+        "getdents",
+        "getdents64",
+        "getegid",
+        "geteuid",
+        "getgid",
+        "getpid",
+        "getppid",
+        "getrandom",
+        "getrlimit",
+        "getsockname",
+        "getsockopt",
+        "gettid",
+        "gettimeofday",
+        "getuid",
+        "ioctl",
+        "listen",
+        "lseek",
+        "lstat",
+        "lstat64",
+        "madvise",
+        "mmap",
+        "mmap2",
+        "mprotect",
+        "munmap",
+        "nanosleep",
+        "open",
+        "openat",
+        "pipe",
+        "pipe2",
+        "poll",
+        "ppoll",
+        "pread64",
+        "pwrite64",
+        "read",
+        "readv",
+        "recv",
+        "recvfrom",
+        "recvmsg",
+        "rt_sigaction",
+        "rt_sigprocmask",
+        "rt_sigreturn",
+        "select",
+        "send",
+        "sendmsg",
+        "sendto",
+        "setsockopt",
+        "shutdown",
+        "sigaltstack",
+        "socket",
+        "socketpair",
+        "stat",
+        "stat64",
+        "statfs",
+        "sync",
+        "sysinfo",
+        "time",
+        "uname",
+        "write",
+        "writev"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {
+          "index": 0,
+          "value": 2114060288,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Allow clone only for thread creation"
+    }
+  ]
+}

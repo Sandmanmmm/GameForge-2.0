@@ -3,10 +3,10 @@ kind: Deployment
 metadata:
   labels:
     app: prometheus
-    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/component: service
     app.kubernetes.io/name: prometheus
   name: prometheus
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   replicas: 1
   selector:
@@ -19,18 +19,18 @@ spec:
     spec:
       containers:
       - env: []
-        image: prom/prometheus:latest
+        image: prom/prometheus:v2.45.0
         name: prometheus
         ports:
         - containerPort: 9090
-          name: http
+          name: web
         resources:
           limits:
-            cpu: 500m
-            memory: 1Gi
+            cpu: 1000m
+            memory: 2Gi
           requests:
-            cpu: 100m
-            memory: 256Mi
+            cpu: 200m
+            memory: 512Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -40,7 +40,7 @@ spec:
           runAsNonRoot: true
         volumeMounts:
         - mountPath: /prometheus
-          name: prometheus-data
+          name: data
         - mountPath: /etc/prometheus
           name: config
       securityContext:
@@ -48,6 +48,6 @@ spec:
         runAsGroup: 1001
         runAsUser: 1001
       volumes:
-      - name: prometheus-data
+      - name: data
         persistentVolumeClaim:
-          claimName: prometheus-prometheus-data
+          claimName: prometheus-data

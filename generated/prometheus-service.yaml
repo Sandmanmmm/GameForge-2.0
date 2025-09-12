@@ -4,10 +4,10 @@ metadata:
   labels:
     app: prometheus
   name: prometheus
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   ports:
-  - name: http
+  - name: web
     port: 9090
     targetPort: 9090
   selector:

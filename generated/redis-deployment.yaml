@@ -3,10 +3,10 @@ kind: Deployment
 metadata:
   labels:
     app: redis
-    app.kubernetes.io/component: cache
+    app.kubernetes.io/component: service
     app.kubernetes.io/name: redis
   name: redis
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   replicas: 1
   selector:
@@ -40,12 +40,12 @@ spec:
           runAsNonRoot: true
         volumeMounts:
         - mountPath: /data
-          name: redis-data
+          name: data
       securityContext:
         fsGroup: 1001
         runAsGroup: 1001
         runAsUser: 1001
       volumes:
-      - name: redis-data
+      - name: data
         persistentVolumeClaim:
-          claimName: redis-redis-data
+          claimName: redis-data

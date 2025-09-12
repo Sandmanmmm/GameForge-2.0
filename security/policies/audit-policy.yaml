@@ -1,0 +1,38 @@
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  # Log requests to sensitive resources at RequestResponse level
+  - level: RequestResponse
+    resources:
+    - group: ""
+      resources: ["secrets", "configmaps"]
+    - group: "rbac.authorization.k8s.io"
+      resources: ["*"]
+
+  # Log policy violations for Pod Security Standards
+  - level: RequestResponse
+    namespaces: ["gameforge-security", "gameforge-monitoring"]
+    resources:
+    - group: ""
+      resources: ["pods"]
+    - group: "apps"
+      resources: ["deployments", "daemonsets", "replicasets"]
+
+  # Log all requests to the GameForge namespaces at Metadata level
+  - level: Metadata
+    namespaces: ["gameforge-security", "gameforge-monitoring"]
+    resources:
+    - group: "*"
+      resources: ["*"]
+
+  # Log critical operations at Request level
+  - level: Request
+    users: ["system:admin", "system:kube-admin"]
+    verbs: ["create", "update", "patch", "delete"]
+
+  # Default: log everything else at Metadata level (minimal)
+  - level: Metadata
+    omitStages:
+      - RequestReceived

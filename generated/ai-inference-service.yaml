@@ -4,9 +4,12 @@ metadata:
   labels:
     app: ai-inference
   name: ai-inference
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
   - name: http
     port: 8001
     targetPort: 8001

@@ -4,4 +4,4 @@ metadata:
   labels:
     app.kubernetes.io/name: gameforge
     app.kubernetes.io/version: 1.0.0
-  name: gameforge-prod
+  name: gameforge

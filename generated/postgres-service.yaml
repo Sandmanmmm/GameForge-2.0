@@ -4,7 +4,7 @@ metadata:
   labels:
     app: postgres
   name: postgres
-  namespace: gameforge-prod
+  namespace: gameforge
 spec:
   ports:
   - name: postgres

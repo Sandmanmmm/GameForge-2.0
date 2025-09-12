@@ -1,0 +1,149 @@
+# GameForge Canary Deployment Configuration
+# =========================================
+
+# Default canary deployment settings
+default_canary_config:
+  initial_traffic_percentage: 5
+  max_traffic_percentage: 50
+  traffic_increment: 5
+  monitoring_duration_minutes: 30
+  success_threshold: 0.95
+  error_threshold: 0.05
+  latency_threshold_ms: 500.0
+  statistical_significance: 0.05
+  min_requests_for_promotion: 1000
+  auto_promote: false
+  auto_rollback: true
+
+# Model-specific configurations
+model_configs:
+  game-ai-models:
+    initial_traffic_percentage: 10
+    max_traffic_percentage: 75
+    monitoring_duration_minutes: 60
+    auto_promote: true
+    
+  npc-behavior:
+    initial_traffic_percentage: 5
+    max_traffic_percentage: 30
+    monitoring_duration_minutes: 45
+    error_threshold: 0.02
+    
+  procedural-generation:
+    initial_traffic_percentage: 15
+    max_traffic_percentage: 100
+    monitoring_duration_minutes: 20
+    auto_promote: true
+
+# Environment settings
+environments:
+  production:
+    auto_promote: false
+    auto_rollback: true
+    monitoring_duration_minutes: 60
+    
+  staging:
+    auto_promote: true
+    auto_rollback: true
+    monitoring_duration_minutes: 15
+    
+  testing:
+    auto_promote: true
+    auto_rollback: false
+    monitoring_duration_minutes: 5
+
+# Metrics thresholds by model type
+metrics_thresholds:
+  classification:
+    accuracy: 0.85
+    precision: 0.80
+    recall: 0.80
+    f1_score: 0.80
+    
+  regression:
+    mse: 0.1
+    mae: 0.05
+    r2_score: 0.90
+    
+  generation:
+    quality_score: 0.70
+    diversity_score: 0.60
+    novelty_score: 0.50
+
+# Traffic splitting strategies
+traffic_strategies:
+  conservative:
+    initial_percentage: 1
+    increment: 1
+    max_percentage: 10
+    
+  standard:
+    initial_percentage: 5
+    increment: 5
+    max_percentage: 50
+    
+  aggressive:
+    initial_percentage: 10
+    increment: 10
+    max_percentage: 100
+
+# Monitoring settings
+monitoring:
+  check_interval_seconds: 60
+  metrics_retention_days: 30
+  alert_channels:
+    - slack
+    - email
+    - webhook
+    
+  alert_conditions:
+    high_error_rate:
+      threshold: 0.1
+      duration_minutes: 5
+      
+    high_latency:
+      threshold: 1000
+      duration_minutes: 10
+      
+    low_accuracy:
+      threshold: 0.70
+      duration_minutes: 15
+
+# Security settings
+security:
+  enable_authentication: true
+  api_key_required: true
+  rate_limiting:
+    requests_per_minute: 100
+    burst_limit: 200
+    
+  allowed_operations:
+    - start_deployment
+    - monitor_deployment
+    - rollback_deployment
+    - view_metrics
+    
+  restricted_operations:
+    - promote_deployment
+    - manual_traffic_split
+    - delete_deployment
+
+# Integration settings
+integrations:
+  mlflow:
+    tracking_uri: "http://mlflow-server:5000"
+    model_registry_uri: "http://mlflow-registry:8080"
+    
+  prometheus:
+    metrics_port: 8080
+    scrape_interval: 30
+    
+  grafana:
+    dashboard_url: "http://grafana:3000"
+    
+  vault:
+    secrets_path: "secret/canary"
+    
+  redis:
+    cache_ttl_seconds: 3600
+    cluster_mode: false
