@@ -170,8 +170,11 @@ if (-not $configExists) {
 }
 
 # Check for duplicate service definitions
-$composeFiles = @(Get-ChildItem -Recurse -File -Name "docker-compose*.yml", "docker-compose*.yaml" -ErrorAction SilentlyContinue)
-$k8sFiles = @(Get-ChildItem -Recurse -File -Path "k8s" -Name "*.yaml", "*.yml" -ErrorAction SilentlyContinue)
+$composeFiles = @(Get-ChildItem -Recurse -File -Include "docker-compose*.yml", "docker-compose*.yaml" -ErrorAction SilentlyContinue)
+$k8sFiles = @()
+if (Test-Path "k8s") {
+    $k8sFiles = @(Get-ChildItem -Recurse -File -Path "k8s" -Include "*.yaml", "*.yml" -ErrorAction SilentlyContinue)
+}
 
 $duplicateServices = @()
 $allServices = @{}
