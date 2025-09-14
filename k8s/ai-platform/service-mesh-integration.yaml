@@ -1,0 +1,607 @@
+# Istio Service Mesh Integration for AI Platform
+# Secure model serving, traffic management, and observability
+
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: ai-platform-gateway
+  namespace: gameforge
+  labels:
+    app: ai-platform
+    component: gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  # HTTPS for AI services
+  - port:
+      number: 443
+      name: https-ai
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: ai-platform-tls
+    hosts:
+    - "ai.gameforge.local"
+    - "models.gameforge.local"
+    - "ray.gameforge.local"
+    - "kubeflow.gameforge.local"
+  
+  # HTTP redirect
+  - port:
+      number: 80
+      name: http-ai
+      protocol: HTTP
+    hosts:
+    - "ai.gameforge.local"
+    - "models.gameforge.local"
+    - "ray.gameforge.local"
+    - "kubeflow.gameforge.local"
+    tls:
+      httpsRedirect: true
+
+---
+# Virtual Service for TorchServe
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: torchserve-vs
+  namespace: gameforge
+  labels:
+    app: torchserve
+    component: routing
+spec:
+  hosts:
+  - "models.gameforge.local"
+  - "torchserve-gpu.gameforge.svc.cluster.local"
+  - "torchserve-cpu.gameforge.svc.cluster.local"
+  gateways:
+  - ai-platform-gateway
+  - mesh
+  http:
+  # GPU inference routing
+  - match:
+    - headers:
+        x-gpu-required:
+          exact: "true"
+    - uri:
+        prefix: "/predictions/"
+    route:
+    - destination:
+        host: torchserve-gpu.gameforge.svc.cluster.local
+        port:
+          number: 8080
+      weight: 100
+    timeout: 300s
+    retries:
+      attempts: 3
+      perTryTimeout: 100s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  
+  # CPU inference routing (default)
+  - match:
+    - uri:
+        prefix: "/predictions/"
+    route:
+    - destination:
+        host: torchserve-cpu.gameforge.svc.cluster.local
+        port:
+          number: 8080
+      weight: 80
+    - destination:
+        host: torchserve-gpu.gameforge.svc.cluster.local
+        port:
+          number: 8080
+      weight: 20
+    timeout: 120s
+    retries:
+      attempts: 2
+      perTryTimeout: 60s
+      retryOn: 5xx,reset,connect-failure
+  
+  # Management API
+  - match:
+    - uri:
+        prefix: "/models"
+    - uri:
+        prefix: "/ping"
+    - uri:
+        prefix: "/metrics"
+    route:
+    - destination:
+        host: torchserve-gpu.gameforge.svc.cluster.local
+        port:
+          number: 8081
+      weight: 100
+    timeout: 60s
+  
+  # Load balancing for high-performance inference
+  - match:
+    - headers:
+        x-inference-type:
+          exact: "batch"
+    route:
+    - destination:
+        host: torchserve-gpu.gameforge.svc.cluster.local
+        port:
+          number: 8080
+        subset: gpu-optimized
+      weight: 100
+    timeout: 600s
+
+---
+# Virtual Service for Ray Cluster
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ray-cluster-vs
+  namespace: gameforge
+  labels:
+    app: ray-cluster
+    component: routing
+spec:
+  hosts:
+  - "ray.gameforge.local"
+  - "ray-head.gameforge.svc.cluster.local"
+  gateways:
+  - ai-platform-gateway
+  - mesh
+  http:
+  # Ray Dashboard
+  - match:
+    - uri:
+        prefix: "/dashboard"
+    - uri:
+        prefix: "/"
+    route:
+    - destination:
+        host: ray-head.gameforge.svc.cluster.local
+        port:
+          number: 8265
+    timeout: 300s
+  
+  # Ray Client API
+  - match:
+    - uri:
+        prefix: "/api/v1"
+    route:
+    - destination:
+        host: ray-head.gameforge.svc.cluster.local
+        port:
+          number: 10001
+    timeout: 300s
+  
+  # Ray Serve API
+  - match:
+    - uri:
+        prefix: "/serve"
+    route:
+    - destination:
+        host: ray-head.gameforge.svc.cluster.local
+        port:
+          number: 8000
+    timeout: 300s
+
+---
+# Virtual Service for KubeFlow
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: kubeflow-vs
+  namespace: gameforge
+  labels:
+    app: kubeflow
+    component: routing
+spec:
+  hosts:
+  - "kubeflow.gameforge.local"
+  gateways:
+  - ai-platform-gateway
+  - mesh
+  http:
+  # Central Dashboard
+  - match:
+    - uri:
+        prefix: "/"
+    route:
+    - destination:
+        host: centraldashboard.kubeflow.svc.cluster.local
+        port:
+          number: 80
+    timeout: 300s
+  
+  # ML Pipeline API
+  - match:
+    - uri:
+        prefix: "/pipeline"
+    route:
+    - destination:
+        host: ml-pipeline.kubeflow.svc.cluster.local
+        port:
+          number: 8888
+    timeout: 300s
+  
+  # KServe API
+  - match:
+    - uri:
+        prefix: "/v1/models"
+    - uri:
+        prefix: "/v2/models"
+    route:
+    - destination:
+        host: kserve-controller-manager-service.kserve.svc.cluster.local
+        port:
+          number: 443
+    timeout: 300s
+
+---
+# Destination Rule for TorchServe
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: torchserve-dr
+  namespace: gameforge
+  labels:
+    app: torchserve
+    component: traffic-policy
+spec:
+  host: torchserve-gpu.gameforge.svc.cluster.local
+  trafficPolicy:
+    # Connection pooling
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        keepAlive:
+          time: 7200s
+          interval: 30s
+      http:
+        http1MaxPendingRequests: 64
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        idleTimeout: 90s
+        h2UpgradePolicy: UPGRADE
+    
+    # Load balancing
+    loadBalancer:
+      simple: LEAST_CONN
+    
+    # Circuit breaker
+    outlierDetection:
+      consecutiveGatewayErrors: 3
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: true
+  
+  # Subsets for different workload types
+  subsets:
+  - name: gpu-optimized
+    labels:
+      component: inference-server
+    trafficPolicy:
+      loadBalancer:
+        simple: ROUND_ROBIN
+  
+  - name: cpu-optimized
+    labels:
+      component: cpu-inference
+    trafficPolicy:
+      loadBalancer:
+        simple: LEAST_CONN
+
+---
+# Destination Rule for Ray Cluster
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: ray-cluster-dr
+  namespace: gameforge
+spec:
+  host: ray-head.gameforge.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 30s
+      http:
+        http1MaxPendingRequests: 32
+        http2MaxRequests: 500
+        maxRequestsPerConnection: 20
+        maxRetries: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+
+---
+# Service Entry for External Model Repositories
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: external-model-repos
+  namespace: gameforge
+spec:
+  hosts:
+  - "huggingface.co"
+  - "pytorch.org"
+  - "tensorflow.org"
+  - "github.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 80
+    name: http
+    protocol: HTTP
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+# Authorization Policy for AI Platform
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ai-platform-authz
+  namespace: gameforge
+spec:
+  # Apply to all AI workloads
+  selector:
+    matchLabels:
+      workload-type: ai
+  rules:
+  # Allow internal service communication
+  - from:
+    - source:
+        namespaces: ["gameforge", "monitoring", "istio-system"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT"]
+        paths: ["/ping", "/health", "/metrics"]
+  
+  # Allow inference requests
+  - from:
+    - source:
+        principals: ["cluster.local/ns/gameforge/sa/default"]
+    to:
+    - operation:
+        methods: ["POST"]
+        paths: ["/predictions/*", "/v1/models/*", "/v2/models/*"]
+  
+  # Allow management operations for admin users
+  - from:
+    - source:
+        principals: ["cluster.local/ns/gameforge/sa/admin"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/models", "/models/*"]
+
+---
+# Security Policy for Model Access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: model-access-policy
+  namespace: gameforge
+spec:
+  selector:
+    matchLabels:
+      app: torchserve
+  rules:
+  # Production model access
+  - from:
+    - source:
+        namespaces: ["gameforge"]
+        principals: ["cluster.local/ns/gameforge/sa/model-user"]
+    to:
+    - operation:
+        methods: ["POST"]
+        paths: ["/predictions/gameforge-ai", "/predictions/gameforge-optimizer"]
+    when:
+    - key: request.headers[x-api-key]
+      values: ["valid-api-key"]
+  
+  # Development model access
+  - from:
+    - source:
+        namespaces: ["gameforge"]
+        principals: ["cluster.local/ns/gameforge/sa/developer"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/predictions/*"]
+    when:
+    - key: request.headers[x-environment]
+      values: ["development", "staging"]
+
+---
+# Peer Authentication for mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ai-platform-mtls
+  namespace: gameforge
+spec:
+  # Apply to all AI workloads
+  selector:
+    matchLabels:
+      workload-type: ai
+  mtls:
+    mode: STRICT
+
+---
+# Request Authentication for JWT
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: ai-platform-jwt
+  namespace: gameforge
+spec:
+  selector:
+    matchLabels:
+      app: torchserve
+  jwtRules:
+  - issuer: "https://auth.gameforge.local"
+    jwksUri: "https://auth.gameforge.local/.well-known/jwks.json"
+    audiences:
+    - "ai-platform"
+    outputPayloadToHeader: "x-jwt-payload"
+
+---
+# Telemetry Configuration for AI Platform
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: ai-platform-telemetry
+  namespace: gameforge
+spec:
+  # Apply to AI workloads
+  selector:
+    matchLabels:
+      workload-type: ai
+  
+  # Custom metrics
+  metrics:
+  - providers:
+    - name: prometheus
+  - overrides:
+    - match:
+        metric: ALL_METRICS
+      tagOverrides:
+        ai_model_name:
+          value: "%{REQUEST_HEADER('x-model-name')}"
+        ai_inference_type:
+          value: "%{REQUEST_HEADER('x-inference-type')}"
+        gpu_required:
+          value: "%{REQUEST_HEADER('x-gpu-required')}"
+  
+  # Access logging
+  accessLogging:
+  - providers:
+    - name: otel
+  - overrides:
+    - match:
+        mode: CLIENT
+      format:
+        text: |
+          [%START_TIME%] "%REQ(:METHOD)% %REQ(X-ENVOY-ORIGINAL-PATH?:PATH)% %PROTOCOL%" %RESPONSE_CODE% %RESPONSE_FLAGS% %BYTES_RECEIVED% %BYTES_SENT% %DURATION% %RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)% "%REQ(X-FORWARDED-FOR)%" "%REQ(USER-AGENT)%" "%REQ(X-REQUEST-ID)%" "%REQ(:AUTHORITY)%" "%UPSTREAM_HOST%" model="%REQ(X-MODEL-NAME)%" gpu="%REQ(X-GPU-REQUIRED)%"
+  
+  # Distributed tracing
+  tracing:
+  - providers:
+    - name: jaeger
+
+---
+# Envoy Filter for Custom Headers
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: ai-platform-headers
+  namespace: gameforge
+spec:
+  workloadSelector:
+    labels:
+      workload-type: ai
+  configPatches:
+  # Add custom headers for AI workloads
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.lua
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+          inline_code: |
+            function envoy_on_request(request_handle)
+              -- Add AI platform identification headers
+              request_handle:headers():add("x-ai-platform", "gameforge")
+              request_handle:headers():add("x-request-timestamp", os.time())
+              
+              -- Add GPU scheduling hints
+              local path = request_handle:headers():get(":path")
+              if string.match(path, "/predictions/") then
+                local model = string.match(path, "/predictions/([^/]+)")
+                if model == "gameforge-ai" or model == "gameforge-optimizer" then
+                  request_handle:headers():add("x-gpu-required", "true")
+                end
+              end
+            end
+            
+            function envoy_on_response(response_handle)
+              -- Add response metadata
+              response_handle:headers():add("x-served-by", "ai-platform")
+              response_handle:headers():add("x-response-timestamp", os.time())
+            end
+
+---
+# Fault Injection for Testing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-platform-fault-injection
+  namespace: gameforge
+  labels:
+    app: ai-platform
+    component: testing
+spec:
+  hosts:
+  - "models.gameforge.local"
+  gateways:
+  - ai-platform-gateway
+  http:
+  # Inject faults for testing (disabled by default)
+  - match:
+    - headers:
+        x-test-fault:
+          exact: "true"
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 5s
+      abort:
+        percentage:
+          value: 0.05
+        httpStatus: 503
+    route:
+    - destination:
+        host: torchserve-gpu.gameforge.svc.cluster.local
+        port:
+          number: 8080
+
+---
+# Wasm Extension for AI Model Validation
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: ai-model-validator
+  namespace: gameforge
+spec:
+  selector:
+    matchLabels:
+      app: torchserve
+  url: oci://registry.gameforge.local/wasm/ai-model-validator:latest
+  phase: AUTHN
+  pluginConfig:
+    enabled_models:
+    - "gameforge-ai"
+    - "gameforge-optimizer"
+    - "lightweight-ai"
+    max_request_size: 10485760  # 10MB
+    allowed_content_types:
+    - "application/json"
+    - "image/jpeg"
+    - "image/png"
+    - "application/octet-stream"

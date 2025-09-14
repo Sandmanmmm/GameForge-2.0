@@ -25,8 +25,8 @@ export class RealTemplateGenerator {
 
   constructor() {
     this.aiMockGenerator = new AIMockGenerator()
-    this.apiEndpoint = process.env.GAMEFORGE_API_URL || 'http://localhost:3001/api'
-    this.authToken = process.env.GAMEFORGE_AUTH_TOKEN
+    this.apiEndpoint = (import.meta as any).env?.VITE_GAMEFORGE_API_URL || 'http://localhost:8080/api/v1'
+    this.authToken = (import.meta as any).env?.VITE_GAMEFORGE_AUTH_TOKEN
   }
 
   /**

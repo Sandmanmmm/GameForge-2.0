@@ -1,0 +1,333 @@
+# GameForge AI Platform - Vast.ai RTX 4090 Deployment
+# Optimized for cloud GPU instances with 24GB VRAM
+
+# =============================================================================
+# Vast.ai Instance Configuration
+# =============================================================================
+
+# Recommended Vast.ai Instance Specs:
+# - GPU: RTX 4090 (24GB VRAM)
+# - CPU: 8+ cores
+# - RAM: 32GB+
+# - Storage: 100GB+ NVMe SSD
+# - Network: High bandwidth for model downloads
+
+version: '3.8'
+
+# =============================================================================
+# Security & Resource Templates
+# =============================================================================
+x-vastai-security: &vastai-security
+  user: "1001:1001"
+  read_only: false
+  tmpfs:
+    - /tmp:noexec,nosuid,size=2g
+  cap_drop:
+    - ALL
+  cap_add:
+    - CHOWN
+    - SETUID
+    - SETGID
+
+x-gpu-resources: &gpu-resources
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+x-common-env: &common-env
+  NVIDIA_VISIBLE_DEVICES: all
+  NVIDIA_DRIVER_CAPABILITIES: compute,utility
+  CUDA_VISIBLE_DEVICES: "0"
+
+# =============================================================================
+# AI Platform Services
+# =============================================================================
+services:
+  # Ray Head Node for Distributed Computing
+  ray-head:
+    image: rayproject/ray:2.8.0-gpu
+    container_name: gameforge-ray-head
+    hostname: ray-head
+    <<: *vastai-security
+    <<: *gpu-resources
+    environment:
+      <<: *common-env
+      RAY_DISABLE_IMPORT_WARNING: "1"
+      RAY_USAGE_STATS_ENABLED: "0"
+      RAY_ADDRESS: "0.0.0.0:10001"
+      RAY_DASHBOARD_HOST: "0.0.0.0"
+      RAY_DASHBOARD_PORT: "8265"
+      # RTX 4090 optimizations
+      PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:1024"
+      CUDA_MEMORY_FRACTION: "0.9"  # Use 90% of 24GB = ~21.6GB
+    ports:
+      - "8265:8265"   # Ray Dashboard
+      - "10001:10001" # Ray Client
+      - "8000:8000"   # Ray Serve
+    volumes:
+      - ray_data:/tmp/ray
+      - shared_storage:/shared
+      - ./configs/ray:/configs
+    command: >
+      ray start --head
+      --dashboard-host=0.0.0.0
+      --dashboard-port=8265
+      --port=10001
+      --num-cpus=6
+      --num-gpus=1
+      --memory=20000000000
+      --object-store-memory=8000000000
+      --block
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8265"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # Ray Worker Node (Additional workers can be added)
+  ray-worker:
+    image: rayproject/ray:2.8.0-gpu
+    container_name: gameforge-ray-worker
+    <<: *vastai-security
+    <<: *gpu-resources
+    environment:
+      <<: *common-env
+      RAY_DISABLE_IMPORT_WARNING: "1"
+      RAY_USAGE_STATS_ENABLED: "0"
+      RAY_ADDRESS: "ray-head:10001"
+      # RTX 4090 worker optimizations
+      PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:1024"
+      CUDA_MEMORY_FRACTION: "0.8"
+    volumes:
+      - ray_data:/tmp/ray
+      - shared_storage:/shared
+    command: >
+      ray start
+      --address=ray-head:10001
+      --num-cpus=8
+      --num-gpus=1
+      --memory=24000000000
+      --object-store-memory=6000000000
+      --block
+    depends_on:
+      ray-head:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # TorchServe for Model Serving (RTX 4090 Optimized)
+  torchserve:
+    image: pytorch/torchserve:0.8.2-gpu
+    container_name: gameforge-torchserve
+    <<: *vastai-security
+    <<: *gpu-resources
+    environment:
+      <<: *common-env
+      TS_CONFIG_FILE: /config/config.properties
+      TS_MODEL_STORE: /models
+      TS_LOAD_MODELS: all
+      # RTX 4090 specific optimizations
+      PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:1024,expandable_segments:True"
+      TS_GPU_MEMORY_FRACTION: "0.7"  # Use 70% of 24GB = ~16.8GB
+      TS_ENABLE_METRICS_API: "true"
+      TS_METRICS_MODE: "prometheus"
+    ports:
+      - "8080:8080"   # Inference API
+      - "8081:8081"   # Management API
+      - "8082:8082"   # Metrics API
+    volumes:
+      - model_store:/models
+      - ./configs/torchserve:/config
+      - torchserve_logs:/logs
+    command: >
+      torchserve
+      --start
+      --model-store=/models
+      --ts-config=/config/config.properties
+      --enable-model-api
+      --enable-metrics-api
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # Jupyter Lab for Development
+  jupyter:
+    image: jupyter/tensorflow-notebook:latest
+    container_name: gameforge-jupyter
+    <<: *vastai-security
+    environment:
+      <<: *common-env
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-gameforge-ai-2025}
+      GRANT_SUDO: "yes"
+      # RTX 4090 development environment
+      TF_FORCE_GPU_ALLOW_GROWTH: "true"
+      CUDA_MEMORY_FRACTION: "0.3"  # Conservative for development
+    ports:
+      - "8888:8888"   # Jupyter Lab
+    volumes:
+      - jupyter_data:/home/jovyan/work
+      - shared_storage:/shared
+      - ./notebooks:/home/jovyan/notebooks
+    command: >
+      start-notebook.sh
+      --NotebookApp.token='${JUPYTER_TOKEN:-gameforge-ai-2025}'
+      --NotebookApp.password=''
+      --NotebookApp.allow_root=True
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # MLflow for Experiment Tracking
+  mlflow:
+    image: python:3.9-slim
+    container_name: gameforge-mlflow
+    <<: *vastai-security
+    environment:
+      MLFLOW_BACKEND_STORE_URI: "sqlite:///mlflow/mlflow.db"
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: "/mlflow/artifacts"
+    ports:
+      - "5000:5000"   # MLflow UI
+    volumes:
+      - mlflow_data:/mlflow
+      - shared_storage:/shared
+    command: >
+      bash -c "
+      pip install mlflow[extras] boto3 psycopg2-binary &&
+      mlflow server
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+      "
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # GPU Monitoring with DCGM
+  gpu-monitor:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.1.8-3.1.5-ubuntu20.04
+    container_name: gameforge-gpu-monitor
+    environment:
+      <<: *common-env
+      DCGM_EXPORTER_LISTEN: ":9400"
+      DCGM_EXPORTER_KUBERNETES: "false"
+    ports:
+      - "9400:9400"   # DCGM Metrics
+    volumes:
+      - /usr/local/cuda:/usr/local/cuda:ro
+    privileged: true
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # Prometheus for Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: gameforge-prometheus
+    ports:
+      - "9090:9090"   # Prometheus UI
+    volumes:
+      - prometheus_data:/prometheus
+      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # Grafana for Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: gameforge-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-gameforge-ai-2025}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"   # Grafana UI
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./configs/grafana:/etc/grafana/provisioning
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # Redis for Caching
+  redis:
+    image: redis:7-alpine
+    container_name: gameforge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # Model Download and Management Service
+  model-manager:
+    image: python:3.9-slim
+    container_name: gameforge-model-manager
+    <<: *vastai-security
+    environment:
+      HF_HOME: /models/huggingface
+      TRANSFORMERS_CACHE: /models/transformers
+    volumes:
+      - model_store:/models
+      - ./scripts/model-manager.py:/app/model-manager.py
+    command: >
+      bash -c "
+      pip install torch torchvision transformers huggingface-hub requests &&
+      python /app/model-manager.py
+      "
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+# =============================================================================
+# Networks and Volumes
+# =============================================================================
+networks:
+  ai-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  ray_data:
+    driver: local
+  shared_storage:
+    driver: local
+  model_store:
+    driver: local
+  jupyter_data:
+    driver: local
+  mlflow_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  redis_data:
+    driver: local
+  torchserve_logs:
+    driver: local

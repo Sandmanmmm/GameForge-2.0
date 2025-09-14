@@ -1,0 +1,49 @@
+version: "3"
+services:
+  grafana-provisioning:
+    image: grafana/grafana:10.2.0
+    container_name: grafana-provisioning
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./configs/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./configs/grafana/datasources:/etc/grafana/provisioning/datasources
+      - grafana-data:/var/lib/grafana
+    networks:
+      - ai-platform
+    depends_on:
+      - prometheus
+      
+  prometheus-alerting:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus-alerting
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./configs/prometheus:/etc/prometheus
+      - ./configs/alerts:/etc/prometheus/alerts
+      - prometheus-data:/prometheus
+    networks:
+      - ai-platform
+
+volumes:
+  grafana-data:
+  prometheus-data:
+
+networks:
+  ai-platform:
+    external: true

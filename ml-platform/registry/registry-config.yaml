@@ -1,0 +1,346 @@
+# GameForge Model Registry Configuration
+#
+# Defines the model promotion pipeline: dev → staging → production
+# Includes versioning, approvals, and deployment gates
+
+# === REGISTRY CONFIGURATION ===
+registry:
+  name: "gameforge-model-registry"
+  version: "1.0.0"
+  storage_backend: "s3"
+  storage_location: "s3://gameforge-models/registry/"
+  metadata_backend: "database"  # Options: database, json, yaml
+
+# === DEPLOYMENT ENVIRONMENTS ===
+environments:
+  
+  dev:
+    name: "Development"
+    description: "Development environment for initial model testing"
+    auto_deploy: true
+    approval_required: false
+    performance_gates: []
+    retention_policy: "30 days"
+    compute_resources:
+      min_gpu_memory: "4GB"
+      max_instances: 2
+    endpoints:
+      - "dev-api.gameforge.internal/v1/models/"
+    
+  staging:
+    name: "Staging" 
+    description: "Pre-production testing environment"
+    auto_deploy: false
+    approval_required: true
+    approvers:
+      - "ml-lead@gameforge.dev"
+      - "qa-team@gameforge.dev"
+    performance_gates:
+      - metric: "perplexity"
+        operator: "<"
+        threshold: 4.0
+        required: true
+      - metric: "bleu_score"
+        operator: ">"
+        threshold: 0.7
+        required: true
+      - metric: "latency_p95"
+        operator: "<"
+        threshold: 500  # milliseconds
+        required: true
+      - metric: "memory_usage"
+        operator: "<"
+        threshold: 16  # GB
+        required: true
+    retention_policy: "90 days"
+    compute_resources:
+      min_gpu_memory: "12GB"
+      max_instances: 4
+    endpoints:
+      - "staging-api.gameforge.internal/v1/models/"
+    testing_requirements:
+      - "integration_tests"
+      - "load_testing"
+      - "security_scan"
+      - "bias_evaluation"
+    
+  production:
+    name: "Production"
+    description: "Live production environment serving end users"
+    auto_deploy: false
+    approval_required: true
+    approvers:
+      - "ml-lead@gameforge.dev"
+      - "engineering-director@gameforge.dev"
+      - "security@gameforge.dev"
+    performance_gates:
+      - metric: "perplexity"
+        operator: "<"
+        threshold: 3.5
+        required: true
+      - metric: "bleu_score"
+        operator: ">"
+        threshold: 0.75
+        required: true
+      - metric: "latency_p95"
+        operator: "<"
+        threshold: 300  # milliseconds
+        required: true
+      - metric: "memory_usage"
+        operator: "<"
+        threshold: 12  # GB
+        required: true
+      - metric: "availability"
+        operator: ">"
+        threshold: 99.9  # percent
+        required: true
+    retention_policy: "1 year"
+    compute_resources:
+      min_gpu_memory: "20GB"
+      max_instances: 10
+      auto_scaling: true
+    endpoints:
+      - "api.gameforge.ai/v1/models/"
+      - "api.gameforge.ai/v2/models/"
+    testing_requirements:
+      - "integration_tests"
+      - "load_testing"
+      - "security_scan"
+      - "bias_evaluation"
+      - "compliance_audit"
+      - "disaster_recovery_test"
+    
+# === MODEL LIFECYCLE STAGES ===
+stages:
+  
+  experimental:
+    description: "Early development, not ready for staging"
+    allowed_transitions: ["archived", "development"]
+    
+  development:
+    description: "Active development, ready for dev environment"
+    allowed_transitions: ["staging", "archived", "experimental"]
+    
+  staging:
+    description: "Ready for staging environment testing"
+    allowed_transitions: ["production", "development", "archived"]
+    
+  production:
+    description: "Live in production environment"
+    allowed_transitions: ["archived", "deprecated"]
+    
+  deprecated:
+    description: "Marked for removal, still serving traffic"
+    allowed_transitions: ["archived"]
+    
+  archived:
+    description: "No longer active, preserved for compliance"
+    allowed_transitions: []
+
+# === PROMOTION WORKFLOW ===
+promotion_workflow:
+  
+  dev_to_staging:
+    trigger: "manual"  # Options: manual, automatic, scheduled
+    prerequisites:
+      - "model_validation_passed"
+      - "security_scan_passed"
+      - "performance_benchmarks_met"
+    approvals:
+      - role: "ml_engineer"
+        required: 1
+    automation:
+      - "run_integration_tests"
+      - "deploy_to_staging"
+      - "notify_qa_team"
+    
+  staging_to_production:
+    trigger: "manual"
+    prerequisites:
+      - "staging_tests_passed"
+      - "load_testing_completed"
+      - "security_audit_approved"
+      - "bias_evaluation_completed"
+      - "compliance_review_approved"
+    approvals:
+      - role: "ml_lead"
+        required: 1
+      - role: "engineering_director"
+        required: 1
+      - role: "security_officer"
+        required: 1
+    automation:
+      - "create_production_backup"
+      - "deploy_canary_release"
+      - "monitor_health_metrics"
+      - "full_deployment_on_success"
+      - "notify_stakeholders"
+
+# === QUALITY GATES ===
+quality_gates:
+  
+  performance:
+    - name: "Model Accuracy"
+      metrics: ["perplexity", "bleu_score", "rouge_l"]
+      thresholds:
+        staging: {"perplexity": 4.0, "bleu_score": 0.7}
+        production: {"perplexity": 3.5, "bleu_score": 0.75}
+    
+    - name: "Inference Performance" 
+      metrics: ["latency_p50", "latency_p95", "throughput"]
+      thresholds:
+        staging: {"latency_p95": 500, "throughput": 10}
+        production: {"latency_p95": 300, "throughput": 50}
+    
+    - name: "Resource Efficiency"
+      metrics: ["memory_usage", "gpu_utilization", "cost_per_inference"]
+      thresholds:
+        staging: {"memory_usage": 16, "gpu_utilization": 0.8}
+        production: {"memory_usage": 12, "gpu_utilization": 0.85}
+  
+  security:
+    - name: "Security Compliance"
+      checks: ["vulnerability_scan", "secrets_detection", "access_control"]
+      required_for: ["staging", "production"]
+    
+    - name: "Data Privacy"
+      checks: ["pii_detection", "gdpr_compliance", "data_lineage"]
+      required_for: ["production"]
+  
+  governance:
+    - name: "Model Documentation"
+      requirements: ["model_card", "api_documentation", "deployment_guide"]
+      required_for: ["staging", "production"]
+    
+    - name: "Compliance Audit"
+      requirements: ["bias_evaluation", "fairness_assessment", "ethical_review"]
+      required_for: ["production"]
+
+# === MONITORING & ALERTING ===
+monitoring:
+  
+  metrics:
+    - name: "model_predictions_per_second"
+      type: "counter"
+      labels: ["model_id", "environment", "version"]
+    
+    - name: "model_latency_seconds"
+      type: "histogram"
+      labels: ["model_id", "environment", "endpoint"]
+      buckets: [0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
+    
+    - name: "model_accuracy_score"
+      type: "gauge"
+      labels: ["model_id", "metric_type"]
+    
+    - name: "model_error_rate"
+      type: "counter"
+      labels: ["model_id", "error_type", "environment"]
+  
+  alerts:
+    - name: "High Error Rate"
+      condition: "model_error_rate > 0.05"
+      severity: "critical"
+      notify: ["ml-team@gameforge.dev", "ops@gameforge.dev"]
+    
+    - name: "Performance Degradation"
+      condition: "model_accuracy_score < threshold"
+      severity: "warning"
+      notify: ["ml-team@gameforge.dev"]
+    
+    - name: "High Latency"
+      condition: "model_latency_p95 > threshold"
+      severity: "warning"
+      notify: ["ml-team@gameforge.dev", "platform@gameforge.dev"]
+
+# === ROLLBACK STRATEGY ===
+rollback:
+  
+  triggers:
+    - "error_rate > 10%"
+    - "latency_p95 > 2x_baseline"
+    - "accuracy_drop > 15%"
+    - "manual_trigger"
+  
+  strategy: "blue_green"  # Options: blue_green, canary, rolling
+  
+  automation:
+    - "stop_traffic_to_new_version"
+    - "route_traffic_to_previous_version"
+    - "notify_incident_response"
+    - "create_rollback_report"
+  
+  recovery_time_objective: "5 minutes"
+  recovery_point_objective: "0 data loss"
+
+# === RETENTION & ARCHIVAL ===
+retention:
+  
+  models:
+    dev: "30 days"
+    staging: "90 days" 
+    production: "1 year"
+    archived: "7 years"  # Compliance requirement
+  
+  artifacts:
+    training_logs: "1 year"
+    evaluation_results: "2 years"
+    model_cards: "permanent"
+    audit_logs: "7 years"
+  
+  automation:
+    cleanup_schedule: "daily"
+    archive_schedule: "weekly"
+    notification_before_deletion: "7 days"
+
+# === COMPLIANCE ===
+compliance:
+  
+  regulatory_requirements:
+    - "GDPR Article 22 (Automated decision-making)"
+    - "AI Act (EU) - High-risk AI systems"
+    - "Internal GameForge AI Ethics Guidelines"
+  
+  audit_trail:
+    - "model_creation_timestamp"
+    - "training_data_lineage" 
+    - "approval_workflow_logs"
+    - "deployment_history"
+    - "access_logs"
+    - "performance_monitoring"
+  
+  documentation_requirements:
+    - "model_card"
+    - "risk_assessment"
+    - "bias_evaluation_report"
+    - "data_privacy_impact_assessment"
+    - "deployment_procedures"
+
+# === INTEGRATION ENDPOINTS ===
+integrations:
+  
+  cicd:
+    - name: "gitlab"
+      webhook_url: "https://gitlab.gameforge.dev/api/v4/projects/ml-platform/trigger/pipeline"
+      events: ["model_promoted", "deployment_completed", "rollback_triggered"]
+    
+    - name: "jenkins"
+      webhook_url: "https://jenkins.gameforge.dev/generic-webhook-trigger/invoke"
+      events: ["model_ready_for_deployment"]
+  
+  monitoring:
+    - name: "prometheus"
+      metrics_endpoint: "/metrics"
+      scrape_interval: "30s"
+    
+    - name: "grafana"
+      dashboard_url: "https://grafana.gameforge.dev/d/ml-models/model-registry"
+  
+  notifications:
+    - name: "slack"
+      webhook_url: "${SLACK_WEBHOOK_URL}"
+      channels: ["#ml-team", "#ops", "#security"]
+    
+    - name: "email"
+      smtp_server: "mail.gameforge.dev"
+      recipients: ["ml-team@gameforge.dev"]

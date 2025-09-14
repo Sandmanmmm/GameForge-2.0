@@ -14,12 +14,16 @@ logger = logging.getLogger(__name__)
 
 class MigrationRunner:
     def __init__(self):
+        db_password = os.getenv("DB_PASSWORD")
+        if not db_password:
+            raise RuntimeError("DB_PASSWORD environment variable required")
+            
         self.db_config = {
             'host': os.getenv('DB_HOST', 'postgres'),
             'port': os.getenv('DB_PORT', '5432'),
             'database': os.getenv('DB_NAME', 'gameforge'),
             'user': os.getenv('DB_USER', 'gameforge'),
-            'password': os.getenv('DB_PASSWORD', 'gameforge123')
+            'password': db_password
         }
     
     def connect(self):

@@ -1,9 +1,18 @@
 // AI Asset Generator Component for Asset Gallery
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { generateAssets, AssetGenerationRequest } from '../lib/aiAPI'
+import { 
+  generateAssets, 
+  generateAIAsset, 
+  pollJobUntilComplete,
+  AssetGenerationRequest, 
+  AIGenerateRequest,
+  JobMetadata
+} from '../lib/aiAPI'
 import { stylePresetManager, StylePreset } from '../lib/stylePresets'
 import { assetStorageManager, GeneratedAsset, AssetMetadata } from '../lib/assetStorage'
+import { JobTracker } from './JobTracker'
+import { JobResultDisplay } from './JobResultDisplay'
 import { Button } from './ui/button'
 import { Card } from './ui/card'
 import { Badge } from './ui/badge'
@@ -43,6 +52,8 @@ interface GenerationProgress {
   message: string
   startTime: Date
   estimatedTimeRemaining?: number
+  jobId?: string
+  jobData?: JobMetadata
 }
 
 interface QuickTemplate {
@@ -178,7 +189,7 @@ export function AIAssetGenerator({ onAssetGenerated, onClose, className }: AIAss
       id: progressId,
       status: 'generating',
       progress: 0,
-      message: 'Starting SDXL asset generation...',
+      message: 'Starting AI asset generation...',
       startTime: new Date()
     })
 
@@ -189,39 +200,61 @@ export function AIAssetGenerator({ onAssetGenerated, onClose, className }: AIAss
         enhancedPrompt = stylePresetManager.applyPresetToPrompt(selectedStylePreset, prompt)
       }
 
-      const response = await generateAssets({
+      // Use new job-based API
+      const [width, height] = imageSize.split('x').map(Number)
+      const aiRequest: AIGenerateRequest = {
         prompt: enhancedPrompt,
-        assetType: selectedAssetType,
-        style: selectedStylePreset?.name || 'digital art',
-        size: imageSize,
+        style: selectedStylePreset?.name || 'fantasy',
+        category: selectedAssetType,
+        width: width || 512,
+        height: height || 512,
+        quality: qualityLevel,
         count: generateCount,
-        provider: 'local', // Force SDXL service
-      })
+        model: 'stable-diffusion-xl'
+      }
+
+      const response = await generateAIAsset(aiRequest)
 
       if (response.success && response.data) {
-        // Check if we got a job ID (SDXL service)
-        if (response.data.jobId) {
-          // Poll for SDXL results
-          await pollForSDXLResults(response.data.jobId, progressId)
-        } else if (response.data.assets) {
-          // Direct assets (fallback providers)
-          const newAssets = response.data.assets.map(createGeneratedAsset)
-          setGeneratedAssets(prev => [...prev, ...newAssets])
+        // Update progress with job info
+        setGenerationProgress(prev => prev ? {
+          ...prev,
+          jobId: response.data!.job_id,
+          message: response.data!.message,
+          estimatedTimeRemaining: response.data!.estimated_duration
+        } : null)
+
+        // Start polling for job completion
+        const completedJob = await pollJobUntilComplete(
+          response.data.job_id,
+          (jobUpdate) => {
+            setGenerationProgress(prev => prev ? {
+              ...prev,
+              progress: jobUpdate.progress,
+              message: jobUpdate.metadata?.current_stage || 'Processing...',
+              jobData: jobUpdate
+            } : null)
+          }
+        )
+
+        // Process completed job
+        if (completedJob.asset_url) {
+          const newAsset = createGeneratedAssetFromJob(completedJob, enhancedPrompt)
+          setGeneratedAssets(prev => [...prev, newAsset])
           
           // Save to storage and notify parent
-          for (const asset of newAssets) {
-            await assetStorageManager.saveAsset(asset)
-            if (onAssetGenerated) {
-              onAssetGenerated(asset)
-            }
+          await assetStorageManager.saveAsset(newAsset)
+          if (onAssetGenerated) {
+            onAssetGenerated(newAsset)
           }
           
           setGenerationProgress({
             id: progressId,
             status: 'completed',
             progress: 100,
-            message: `Successfully generated ${newAssets.length} asset(s)`,
-            startTime: new Date()
+            message: 'AI asset generation completed successfully!',
+            startTime: new Date(),
+            jobData: completedJob
           })
         }
       } else {
@@ -234,7 +267,7 @@ export function AIAssetGenerator({ onAssetGenerated, onClose, className }: AIAss
         id: progressId,
         status: 'error',
         progress: 0,
-        message: `SDXL generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        message: `Generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         startTime: new Date()
       })
     } finally {
@@ -243,80 +276,52 @@ export function AIAssetGenerator({ onAssetGenerated, onClose, className }: AIAss
       // Clear progress after a delay
       setTimeout(() => {
         setGenerationProgress(null)
-      }, 5000) // Longer delay for error messages
+      }, 5000)
     }
   }
 
-  // Poll SDXL service for results
-  const pollForSDXLResults = async (jobId: string, progressId: string) => {
-    const maxPolls = 60 // 5 minutes max (60 * 5 seconds)
-    const pollInterval = 5000 // 5 seconds
+  // Create asset from completed job
+  const createGeneratedAssetFromJob = (job: JobMetadata, prompt: string): GeneratedAsset => {
+    const currentDate = new Date()
     
-    for (let i = 0; i < maxPolls; i++) {
-      try {
-        const response = await fetch(`/api/ai/jobs/${jobId}`)
-        const result = await response.json()
-        
-        if (result.success && result.data) {
-          if (result.data.status === 'completed') {
-            // Success! Process real SDXL assets
-            const sdxlAssets = result.data.assets?.map((asset: any) => ({
-              ...createGeneratedAsset(asset),
-              url: asset.url, // Use real SDXL URLs
-              metadata: {
-                ...createGeneratedAsset(asset).metadata,
-                generationMethod: 'sdxl',
-                realAI: true,
-                provider: 'asset_gen',
-                sdxlModel: asset.metadata?.sdxlModel || 'stable-diffusion-xl',
-                processingTime: asset.metadata?.processingTime,
-                qualityScore: asset.metadata?.qualityScore
-              }
-            })) || []
-            
-            setGeneratedAssets(prev => [...prev, ...sdxlAssets])
-            
-            // Save to storage and notify parent
-            for (const asset of sdxlAssets) {
-              await assetStorageManager.saveAsset(asset)
-              if (onAssetGenerated) {
-                onAssetGenerated(asset)
-              }
-            }
-            
-            setGenerationProgress({
-              id: progressId,
-              status: 'completed',
-              progress: 100,
-              message: `✅ SDXL generation complete! Generated ${sdxlAssets.length} real AI asset(s)`,
-              startTime: new Date()
-            })
-            return
-          } else if (result.data.status === 'failed') {
-            throw new Error(result.data.message || 'SDXL generation failed')
-          } else {
-            // Still processing - update progress
-            const progress = Math.min(result.data.progress || (i * 100) / maxPolls, 99)
-            setGenerationProgress({
-              id: progressId,
-              status: 'generating',
-              progress,
-              message: result.data.message || `🎨 SDXL generating... ${Math.round(progress)}%`,
-              startTime: new Date(),
-              estimatedTimeRemaining: result.data.estimatedTimeRemaining
-            })
-          }
-        }
-        
-        await new Promise(resolve => setTimeout(resolve, pollInterval))
-      } catch (error) {
-        console.error('Polling error:', error)
-        throw new Error(`Polling failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
-      }
+    return {
+      id: job.id,
+      name: `AI Generated ${selectedAssetType}`,
+      type: selectedAssetType,
+      category: selectedAssetType,
+      status: 'ready',
+      src: job.asset_url!,
+      thumbnail: job.asset_url!, // Same as src for now
+      prompt: prompt,
+      style: selectedStylePreset?.name || 'digital art',
+      resolution: imageSize,
+      format: 'png',
+      tags: [],
+      variations: [],
+      linkedTo: [],
+      metadata: {
+        id: job.id,
+        originalPrompt: prompt,
+        enhancedPrompt: prompt,
+        provider: 'local',
+        model: job.metadata?.model || 'stable-diffusion-xl',
+        generationSettings: {
+          steps: 30,
+          guidance: 7.5,
+          quality: qualityLevel
+        },
+        tags: [],
+        category: selectedAssetType,
+        downloads: 0,
+        favorites: 0,
+        views: 0,
+        usage: [],
+        jobData: job
+      },
+      createdAt: currentDate,
+      updatedAt: currentDate,
+      versions: []
     }
-    
-    // Timeout
-    throw new Error('SDXL generation timed out after 5 minutes')
   }
 
   return (

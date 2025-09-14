@@ -1,0 +1,27 @@
+# Conftest Configuration for GameForge Policy Validation
+
+# Policy directories
+policy:
+  - ci/policies
+
+# Namespace mappings for different resource types
+namespace:
+  kubernetes: gameforge.security,gameforge.compliance
+  dockercompose: gameforge.docker
+  dockerfile: gameforge.docker
+
+# Output format
+output: table
+
+# Fail on warnings (set to false for warnings-only mode)
+fail-on-warn: false
+
+# Combine results from multiple policies
+combine: true
+
+# Enable data from external sources
+data:
+  - ci/policies/data
+
+# Exceptions and exemptions file
+exceptions: ci/policies/exceptions.yaml

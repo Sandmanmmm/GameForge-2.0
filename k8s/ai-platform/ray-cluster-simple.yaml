@@ -1,0 +1,142 @@
+# Simplified Ray Cluster for GameForge AI Platform (ray.io/v1)
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: gameforge-ray-cluster
+  namespace: gameforge
+  labels:
+    app: ray-cluster
+    component: ai-platform
+spec:
+  rayVersion: '2.8.0'
+  enableInTreeAutoscaling: true
+  
+  # Head node configuration
+  headGroupSpec:
+    rayStartParams:
+      dashboard-host: '0.0.0.0'
+      dashboard-port: '8265'
+      block: 'true'
+      num-cpus: '2'
+    template:
+      spec:
+        containers:
+        - name: ray-head
+          image: rayproject/ray:2.8.0
+          ports:
+          - containerPort: 6379
+            name: gcs-server
+          - containerPort: 8265
+            name: dashboard
+          - containerPort: 10001
+            name: client
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          volumeMounts:
+          - name: shared-storage
+            mountPath: /shared
+        volumes:
+        - name: shared-storage
+          emptyDir: {}
+        serviceAccountName: ray-head-service-account
+  
+  # Worker groups
+  workerGroupSpecs:
+  - groupName: small-group
+    replicas: 2
+    minReplicas: 1
+    maxReplicas: 5
+    rayStartParams:
+      block: 'true'
+      num-cpus: '2'
+    template:
+      spec:
+        containers:
+        - name: ray-worker
+          image: rayproject/ray:2.8.0
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          volumeMounts:
+          - name: shared-storage
+            mountPath: /shared
+        volumes:
+        - name: shared-storage
+          emptyDir: {}
+        serviceAccountName: ray-worker-service-account
+
+---
+# Ray Head Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: gameforge-ray-cluster-head-svc
+  namespace: gameforge
+spec:
+  selector:
+    ray.io/cluster: gameforge-ray-cluster
+    ray.io/node-type: head
+  ports:
+  - name: gcs-server
+    port: 6379
+    targetPort: 6379
+  - name: dashboard
+    port: 8265
+    targetPort: 8265
+  - name: client
+    port: 10001
+    targetPort: 10001
+
+---
+# Service Accounts
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ray-head-service-account
+  namespace: gameforge
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ray-worker-service-account
+  namespace: gameforge
+
+---
+# RBAC
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ray-cluster-role
+  namespace: gameforge
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ray-cluster-rolebinding
+  namespace: gameforge
+subjects:
+- kind: ServiceAccount
+  name: ray-head-service-account
+  namespace: gameforge
+- kind: ServiceAccount
+  name: ray-worker-service-account
+  namespace: gameforge
+roleRef:
+  kind: Role
+  name: ray-cluster-role
+  apiGroup: rbac.authorization.k8s.io

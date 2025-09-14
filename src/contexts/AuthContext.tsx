@@ -1,4 +1,5 @@
 import React, { createContext, useState, useEffect } from "react";
+import { AuthAPI } from "../services/api";
 
 interface AuthContextType {
   user: any;
@@ -8,6 +9,7 @@ interface AuthContextType {
   loginWithGitHub: () => void;
   loginWithGoogle: () => void;
   handleOAuthCallback: (token: string, user: any) => void;
+  updateUserProfile: (profileData: { name?: string }) => Promise<void>;
   logout: () => void;
 }
 
@@ -19,6 +21,7 @@ export const AuthContext = createContext<AuthContextType>({
   loginWithGitHub: () => {},
   loginWithGoogle: () => {},
   handleOAuthCallback: () => {},
+  updateUserProfile: async () => {},
   logout: () => {}
 });
 
@@ -37,38 +40,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (email: string, password: string) => {
-    const res = await fetch("http://localhost:3001/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password })
-    });
-
-    const data = await res.json();
-    if (res.ok) {
-      setToken(data.token);
-      setUser(data.user);
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("user", JSON.stringify(data.user));
-    } else {
-      throw new Error(data.message || "Login failed");
+    try {
+      const response = await AuthAPI.login(email, password);
+      if (response.success && response.data) {
+        setToken(response.data.token);
+        setUser(response.data.user);
+        localStorage.setItem("token", response.data.token);
+        localStorage.setItem("user", JSON.stringify(response.data.user));
+      } else {
+        throw new Error(response.error?.message || "Login failed");
+      }
+    } catch (error: any) {
+      throw new Error(error.message || "Login failed");
     }
   };
 
   const register = async (email: string, password: string, name: string) => {
-    const res = await fetch("http://localhost:3001/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, name })
-    });
-
-    const data = await res.json();
-    if (res.ok) {
-      setToken(data.token);
-      setUser(data.user);
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("user", JSON.stringify(data.user));
-    } else {
-      throw new Error(data.message || "Registration failed");
+    try {
+      const response = await AuthAPI.register(email, password, name);
+      if (response.success && response.data) {
+        setToken(response.data.token);
+        setUser(response.data.user);
+        localStorage.setItem("token", response.data.token);
+        localStorage.setItem("user", JSON.stringify(response.data.user));
+      } else {
+        throw new Error(response.error?.message || "Registration failed");
+      }
+    } catch (error: any) {
+      throw new Error(error.message || "Registration failed");
     }
   };
 
@@ -80,11 +79,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithGitHub = () => {
-    window.location.href = "http://localhost:3001/api/auth/github";
+    const baseUrl = (import.meta as any).env?.VITE_GAMEFORGE_API_URL || "http://localhost:8080";
+    window.location.href = `${baseUrl}/api/v1/auth/github`;
   };
 
   const loginWithGoogle = () => {
-    window.location.href = "http://localhost:3001/api/auth/google";
+    const baseUrl = (import.meta as any).env?.VITE_GAMEFORGE_API_URL || "http://localhost:8080";
+    window.location.href = `${baseUrl}/api/v1/auth/google`;
   };
 
   const handleOAuthCallback = (token: string, user: any) => {
@@ -94,8 +95,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem("user", JSON.stringify(user));
   };
 
+  const updateUserProfile = async (profileData: { name?: string }) => {
+    try {
+      const response = await AuthAPI.updateProfile(profileData);
+      if (response.success && response.data) {
+        // Update the user state with the new data
+        const updatedUser = response.data.user;
+        setUser(updatedUser);
+        localStorage.setItem("user", JSON.stringify(updatedUser));
+        
+        // Update token if a new one was provided
+        if (response.data.access_token) {
+          setToken(response.data.access_token);
+          localStorage.setItem("token", response.data.access_token);
+        }
+      } else {
+        throw new Error(response.error?.message || "Profile update failed");
+      }
+    } catch (error: any) {
+      throw new Error(error.message || "Profile update failed");
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, login, register, loginWithGitHub, loginWithGoogle, handleOAuthCallback, logout }}>
+    <AuthContext.Provider value={{ user, token, login, register, loginWithGitHub, loginWithGoogle, handleOAuthCallback, updateUserProfile, logout }}>
       {children}
     </AuthContext.Provider>
   );

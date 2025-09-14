@@ -1,0 +1,52 @@
+# GameForge Super-Resolution Service Dependencies
+# ==============================================
+
+# Core FastAPI and async support
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+
+# Authentication and security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# AI/ML Core Dependencies
+torch>=2.0.0,<2.2.0
+torchvision>=0.15.0,<0.17.0
+opencv-python==4.8.1.78
+pillow>=10.0.0
+
+# Real-ESRGAN Dependencies
+realesrgan==0.3.0
+basicsr>=1.4.2
+
+# NVIDIA DALI for accelerated image processing
+nvidia-dali-cuda120>=1.29.0  # Adjust CUDA version as needed
+
+# Image processing and utilities
+numpy>=1.24.0,<2.0.0
+scikit-image>=0.21.0
+imageio>=2.31.0
+
+# Data validation and configuration
+pydantic>=2.0.0,<3.0.0
+pyyaml>=6.0.1
+
+# HTTP client for model downloads
+httpx>=0.25.0
+requests>=2.31.0
+
+# Development and testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+flake8>=6.0.0
+
+# Optional monitoring and logging
+structlog>=23.1.0
+prometheus-client>=0.17.0
+
+# GPU acceleration (optional, install manually if needed)
+# cupy-cuda12x>=12.0.0  # Uncomment for CUDA 12.x support
+# tensorrt>=8.6.0       # Uncomment for TensorRT optimization

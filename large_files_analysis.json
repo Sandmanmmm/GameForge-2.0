@@ -1,0 +1,54 @@
+{
+  "timestamp": "2025-09-13T21:37:30.335205",
+  "repository_path": "C:\\Users\\sandr\\GameForge Dev\\GameForge",
+  "threshold_mb": 20,
+  "statistics": {
+    "total_large_files": 1,
+    "total_size_mb": 51.79,
+    "binary_files_count": 0,
+    "history_objects": 0,
+    "working_tree_files": 1
+  },
+  "categories": {
+    "large_text": [
+      {
+        "path": ".git\\objects\\pack\\pack-fce1f41f774d96bc74ebde43eb20a4d1dbcf25ba.pack",
+        "size_bytes": 54305722,
+        "size_mb": 51.79,
+        "is_binary": false,
+        "is_tracked": false,
+        "location": "working_tree",
+        "migration": {
+          "category": "large_text",
+          "storage_location": "s3://gameforge-artifacts/",
+          "action": "review_and_migrate",
+          "priority": "medium",
+          "steps": [
+            "1. Review .git\\objects\\pack\\pack-fce1f41f774d96bc74ebde43eb20a4d1dbcf25ba.pack to determine if needed",
+            "2. If needed, upload to s3://gameforge-artifacts/",
+            "3. Update references in code/documentation",
+            "4. Remove from git: git rm .git\\objects\\pack\\pack-fce1f41f774d96bc74ebde43eb20a4d1dbcf25ba.pack",
+            "5. Commit removal"
+          ]
+        }
+      }
+    ]
+  },
+  "recommendations": [
+    {
+      "file": ".git\\objects\\pack\\pack-fce1f41f774d96bc74ebde43eb20a4d1dbcf25ba.pack",
+      "size_mb": 51.79,
+      "category": "large_text",
+      "priority": "medium",
+      "action": "review_and_migrate",
+      "storage_location": "s3://gameforge-artifacts/",
+      "steps": [
+        "1. Review .git\\objects\\pack\\pack-fce1f41f774d96bc74ebde43eb20a4d1dbcf25ba.pack to determine if needed",
+        "2. If needed, upload to s3://gameforge-artifacts/",
+        "3. Update references in code/documentation",
+        "4. Remove from git: git rm .git\\objects\\pack\\pack-fce1f41f774d96bc74ebde43eb20a4d1dbcf25ba.pack",
+        "5. Commit removal"
+      ]
+    }
+  ]
+}

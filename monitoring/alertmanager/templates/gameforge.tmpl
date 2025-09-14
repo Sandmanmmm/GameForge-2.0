@@ -1,0 +1,43 @@
+{{ define "gameforge.title" }}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.SortedPairs.Values | join " " }} {{ if gt (len .CommonLabels) (len .GroupLabels) }}({{ with .CommonLabels.Remove .GroupLabels.Names }}{{ .Values | join " " }}{{ end }}){{ end }}
+{{ end }}
+
+{{ define "gameforge.default.message" }}
+{{ if gt (len .Alerts.Firing) 0 }}
+**Firing:**
+{{ range .Alerts.Firing }}
+- Alert: {{ .Annotations.summary }}
+  Description: {{ .Annotations.description }}
+  Labels: {{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+{{ end }}
+{{ end }}
+
+{{ if gt (len .Alerts.Resolved) 0 }}
+**Resolved:**
+{{ range .Alerts.Resolved }}
+- Alert: {{ .Annotations.summary }}
+  Description: {{ .Annotations.description }}
+  Labels: {{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+{{ define "gameforge.email.subject" }}
+{{ template "gameforge.title" . }}
+{{ end }}
+
+{{ define "gameforge.email.body" }}
+{{ template "gameforge.default.message" . }}
+
+Dashboard: http://grafana.gameforge.local:3000
+Prometheus: http://prometheus.gameforge.local:9090
+AlertManager: http://alertmanager.gameforge.local:9093
+{{ end }}
+
+{{ define "slack.gameforge.title" }}
+{{ template "gameforge.title" . }}
+{{ end }}
+
+{{ define "slack.gameforge.text" }}
+{{ template "gameforge.default.message" . }}
+{{ end }}

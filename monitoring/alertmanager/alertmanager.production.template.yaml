@@ -1,0 +1,344 @@
+# AlertManager Configuration Template for GameForge Production
+# This template will be processed with environment variable substitution
+
+global:
+  # Default SMTP configuration - Security fix: Remove test defaults
+  smtp_smarthost: '${SMTP_HOST}'
+  smtp_from: '${EMAIL_FROM}'
+  smtp_auth_username: '${SMTP_USERNAME}'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_require_tls: true
+  
+  # Slack configuration - Security fix: Remove test default
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+  
+  # PagerDuty configuration
+  pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'
+  
+  # Global templates
+  http_config:
+    tls_config:
+      insecure_skip_verify: false
+  
+  # Resolve timeout for alerts
+  resolve_timeout: 5m
+
+# Templates for alert formatting
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Routing configuration
+route:
+  # Default receiver
+  receiver: 'gameforge-default'
+  
+  # Group alerts to reduce noise
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 12h
+  
+  # Routing rules
+  routes:
+    # Critical GPU/ML alerts - immediate PagerDuty
+    - match_re:
+        severity: critical
+        service: gameforge-gpu.*
+      receiver: 'gpu-critical-pagerduty'
+      group_wait: 0s
+      repeat_interval: 5m
+    
+    # Security alerts - immediate notification
+    - match:
+        severity: critical
+        category: security
+      receiver: 'security-alerts'
+      group_wait: 0s
+      repeat_interval: 5m
+    
+    # High severity alerts
+    - match:
+        severity: critical
+      receiver: 'gameforge-critical'
+      group_wait: 30s
+      repeat_interval: 5m
+    
+    # Warning alerts
+    - match:
+        severity: warning
+      receiver: 'gameforge-warning'
+      group_wait: 2m
+      repeat_interval: 2h
+    
+    # Infrastructure alerts
+    - match_re:
+        service: gameforge-(postgres|redis|vault|nginx).*
+      receiver: 'infrastructure-alerts'
+      group_wait: 1m
+      repeat_interval: 1h
+    
+    # MLflow/Model Registry alerts
+    - match_re:
+        service: gameforge-mlflow.*
+      receiver: 'mlflow-alerts'
+      group_wait: 2m
+      repeat_interval: 4h
+    
+    # Informational alerts
+    - match:
+        severity: info
+      receiver: 'gameforge-info'
+      group_wait: 5m
+      repeat_interval: 24h
+
+# Alert receivers/notification channels
+receivers:
+  # Default receiver
+  - name: 'gameforge-default'
+    email_configs:
+      # Security fix: Use environment variables without defaults
+      - to: '${ALERT_EMAIL_DEFAULT}'
+        from: '${EMAIL_FROM}'
+        smarthost: '${SMTP_HOST}'
+        auth_username: '${SMTP_USERNAME}'
+        auth_password: '${SMTP_PASSWORD}'
+        html: |
+          <h2>GameForge Alert: {{ .GroupLabels.alertname }} - {{ .Status }}</h2>
+          <table border="1" style="border-collapse: collapse;">
+          <tr><th>Alert</th><th>Description</th><th>Severity</th><th>Service</th><th>Instance</th></tr>
+          {{ range .Alerts }}
+          <tr>
+            <td>{{ .Annotations.summary }}</td>
+            <td>{{ .Annotations.description }}</td>
+            <td>{{ .Labels.severity }}</td>
+            <td>{{ .Labels.service }}</td>
+            <td>{{ .Labels.instance }}</td>
+          </tr>
+          {{ end }}
+          </table>
+          <p><strong>Environment:</strong> Production</p>
+        headers:
+          X-GameForge-Environment: 'production'
+          X-Alert-Priority: 'normal'
+    
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-alerts'
+        title: 'GameForge Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Service:* {{ .Labels.service }}
+          *Instance:* {{ .Labels.instance }}
+          *Status:* {{ .Status }}
+          {{ end }}
+        icon_emoji: ':warning:'
+        username: 'GameForge AlertManager'
+
+  # Critical GPU/ML alerts with PagerDuty
+  - name: 'gpu-critical-pagerduty'
+    pagerduty_configs:
+      - routing_key: '${PAGERDUTY_ROUTING_KEY}'
+        description: 'Critical GPU/ML Alert: {{ .GroupLabels.alertname }}'
+        severity: 'critical'
+        details:
+          summary: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+          environment: 'production'
+          service: '{{ .GroupLabels.service }}'
+          component: 'gpu-ml-pipeline'
+        links:
+          - href: 'http://grafana.gameforge.local:3000'
+            text: 'GameForge Dashboard'
+          - href: 'http://jaeger.gameforge.local:16686'
+            text: 'Distributed Tracing'
+    
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-critical'
+        title: '🚨 CRITICAL GPU/ML Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          <!channel> Critical GPU/ML system alert!
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *GPU ID:* {{ .Labels.gpu_id }}
+          *Node:* {{ .Labels.instance }}
+          *Started:* {{ .StartsAt }}
+          {{ end }}
+          
+          🔧 *Actions Required:*
+          • Check GPU utilization
+          • Verify CUDA driver status
+          • Review model training logs
+        color: 'danger'
+        icon_emoji: ':fire:'
+
+  # Critical alerts (non-GPU)
+  - name: 'gameforge-critical'
+    email_configs:
+      # Security fix: Remove default email
+      - to: '${ALERT_EMAIL_CRITICAL}'
+        from: '${EMAIL_FROM}'
+        smarthost: '${SMTP_HOST}'
+        auth_username: '${SMTP_USERNAME}'
+        auth_password: '${SMTP_PASSWORD}'
+        html: |
+          <h1 style="color: red;">🚨 CRITICAL ALERT</h1>
+          <h2>{{ .GroupLabels.alertname }}</h2>
+          <table border="1" style="border-collapse: collapse;">
+          {{ range .Alerts }}
+          <tr><td><strong>Alert:</strong></td><td>{{ .Annotations.summary }}</td></tr>
+          <tr><td><strong>Description:</strong></td><td>{{ .Annotations.description }}</td></tr>
+          <tr><td><strong>Severity:</strong></td><td style="color: red;">{{ .Labels.severity }}</td></tr>
+          <tr><td><strong>Service:</strong></td><td>{{ .Labels.service }}</td></tr>
+          <tr><td><strong>Instance:</strong></td><td>{{ .Labels.instance }}</td></tr>
+          <tr><td><strong>Started:</strong></td><td>{{ .StartsAt }}</td></tr>
+          {{ end }}
+          </table>
+          <p><a href="http://grafana.gameforge.local:3000">GameForge Dashboard</a> | 
+             <a href="http://grafana.gameforge.local:3000/explore">Logs</a></p>
+        headers:
+          X-GameForge-Environment: 'production'
+          X-Alert-Priority: 'critical'
+    
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-critical'
+        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+        text: |
+          <!here> Critical system alert detected!
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Service:* {{ .Labels.service }}
+          *Instance:* {{ .Labels.instance }}
+          *Started:* {{ .StartsAt }}
+          {{ end }}
+          
+          Dashboard: http://grafana.gameforge.local:3000
+          Logs: http://grafana.gameforge.local:3000/explore
+        color: 'danger'
+        icon_emoji: ':rotating_light:'
+
+  # Warning alerts
+  - name: 'gameforge-warning'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-alerts'
+        title: '⚠️ Warning: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.service }}
+          *Instance:* {{ .Labels.instance }}
+          {{ end }}
+        color: 'warning'
+        icon_emoji: ':warning:'
+
+  # Security alerts
+  - name: 'security-alerts'
+    email_configs:
+      - to: '${ALERT_EMAIL_SECURITY:-security@gameforge.local}'
+        from: '${EMAIL_FROM}'
+        smarthost: '${SMTP_HOST}'
+        auth_username: '${SMTP_USERNAME}'
+        auth_password: '${SMTP_PASSWORD}'
+        html: |
+          <h1 style="color: red; background: yellow; padding: 10px;">🔒 SECURITY ALERT DETECTED</h1>
+          <table border="1" style="border-collapse: collapse;">
+          {{ range .Alerts }}
+          <tr><td><strong>Alert:</strong></td><td>{{ .Annotations.summary }}</td></tr>
+          <tr><td><strong>Description:</strong></td><td>{{ .Annotations.description }}</td></tr>
+          <tr><td><strong>Source:</strong></td><td>{{ .Labels.instance }}</td></tr>
+          <tr><td><strong>Time:</strong></td><td>{{ .StartsAt }}</td></tr>
+          {{ end }}
+          </table>
+          <p style="color: red;"><strong>Immediate investigation required.</strong></p>
+        headers:
+          X-GameForge-Security: 'ALERT'
+          X-Alert-Priority: 'critical'
+    
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-security'
+        title: '🔒 SECURITY ALERT: {{ .GroupLabels.alertname }}'
+        text: |
+          <!here> Security incident detected!
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Source:* {{ .Labels.instance }}
+          *Time:* {{ .StartsAt }}
+          {{ end }}
+        color: 'danger'
+        icon_emoji: ':lock:'
+
+  # Infrastructure alerts
+  - name: 'infrastructure-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-infrastructure'
+        title: '🏗️ Infrastructure: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Service:* {{ .Labels.service }}
+          *Alert:* {{ .Annotations.summary }}
+          *Instance:* {{ .Labels.instance }}
+          {{ end }}
+        icon_emoji: ':building_construction:'
+
+  # MLflow/Model Registry alerts
+  - name: 'mlflow-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-ml-ops'
+        title: '🤖 MLflow Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *ML Platform Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.service }}
+          *Model:* {{ .Labels.model_name }}
+          *Experiment:* {{ .Labels.experiment_id }}
+          {{ end }}
+        icon_emoji: ':robot_face:'
+
+  # Informational alerts
+  - name: 'gameforge-info'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#gameforge-info'
+        title: 'ℹ️ Info: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Info:* {{ .Annotations.summary }}
+          *Service:* {{ .Labels.service }}
+          {{ end }}
+        icon_emoji: ':information_source:'
+
+# Inhibition rules to reduce alert noise
+inhibit_rules:
+  # Inhibit warning alerts when critical alerts are firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'service', 'instance']
+  
+  # Inhibit GPU warning alerts when GPU critical alerts are firing
+  - source_match_re:
+      alertname: 'GPU.*Critical'
+    target_match_re:
+      alertname: 'GPU.*Warning'
+    equal: ['instance', 'gpu_id']
+  
+  # Inhibit downstream service alerts when upstream is down
+  - source_match:
+      alertname: 'PostgresDown'
+    target_match_re:
+      alertname: 'GameForge.*DBConnection.*'
+    equal: ['instance']

@@ -1,0 +1,345 @@
+# GameForge Service Mesh Gateway Configuration
+# Enterprise-grade ingress and traffic management
+
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: gameforge-gateway
+  namespace: gameforge
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  # HTTP traffic (redirect to HTTPS)
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "api.gameforge.local"
+    - "gameforge.local"
+    - "*.gameforge.local"
+    tls:
+      httpsRedirect: true
+  
+  # HTTPS traffic with TLS termination
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - "api.gameforge.local"
+    - "gameforge.local"
+    - "*.gameforge.local"
+    tls:
+      mode: SIMPLE
+      credentialName: gameforge-tls-secret
+  
+  # Internal mesh communication
+  - port:
+      number: 15443
+      name: tls-internal
+      protocol: TLS
+    hosts:
+    - "*.local"
+    tls:
+      mode: ISTIO_MUTUAL
+
+---
+# Virtual Service for GameForge API with advanced routing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: gameforge-api-vs
+  namespace: gameforge
+spec:
+  hosts:
+  - "api.gameforge.local"
+  - "gameforge-api-service.gameforge.svc.cluster.local"
+  gateways:
+  - gameforge-gateway
+  - mesh  # Allow internal mesh traffic
+  
+  http:
+  # Health check routes (bypass authentication)
+  - match:
+    - uri:
+        prefix: "/health"
+    - uri:
+        prefix: "/metrics"
+    - uri:
+        prefix: "/ready"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        port:
+          number: 8000
+    timeout: 5s
+    retries:
+      attempts: 3
+      perTryTimeout: 2s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  
+  # API v1 routes with authentication
+  - match:
+    - uri:
+        prefix: "/api/v1"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        port:
+          number: 8000
+        subset: stable
+      weight: 90  # 90% to stable version
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        port:
+          number: 8000
+        subset: canary
+      weight: 10  # 10% to canary version
+    
+    # Advanced traffic management
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+      retryRemoteLocalities: true
+    
+    # Fault injection for resilience testing
+    fault:
+      delay:
+        percentage:
+          value: 0.1  # 0.1% of requests
+        fixedDelay: 2s
+      abort:
+        percentage:
+          value: 0.05  # 0.05% of requests
+        httpStatus: 503
+    
+    # Headers manipulation
+    headers:
+      request:
+        add:
+          x-forwarded-proto: https
+          x-gameforge-version: v1
+        remove:
+        - x-internal-header
+      response:
+        add:
+          x-content-type-options: nosniff
+          x-frame-options: DENY
+          x-xss-protection: "1; mode=block"
+          strict-transport-security: "max-age=31536000; includeSubDomains"
+  
+  # Admin routes (restricted access)
+  - match:
+    - uri:
+        prefix: "/admin"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        port:
+          number: 8000
+        subset: stable
+    timeout: 60s
+    retries:
+      attempts: 2
+      perTryTimeout: 30s
+    
+    # Additional security headers for admin
+    headers:
+      response:
+        add:
+          x-admin-access: "true"
+          cache-control: "no-cache, no-store, must-revalidate"
+  
+  # WebSocket routes for real-time features
+  - match:
+    - uri:
+        prefix: "/ws"
+    - headers:
+        upgrade:
+          exact: websocket
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        port:
+          number: 8000
+        subset: stable
+    timeout: 0s  # No timeout for WebSocket connections
+  
+  # Default route
+  - route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        port:
+          number: 8000
+        subset: stable
+
+---
+# Destination Rules for GameForge API
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: gameforge-api-dr
+  namespace: gameforge
+spec:
+  host: gameforge-api-service.gameforge.svc.cluster.local
+  
+  # Traffic policies for all subsets
+  trafficPolicy:
+    # Load balancing strategy
+    loadBalancer:
+      simple: LEAST_CONN  # Best for GameForge's stateful sessions
+    
+    # Connection pool settings for performance
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        tcpNoDelay: true
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        idleTimeout: 60s
+        h2UpgradePolicy: UPGRADE
+    
+    # Circuit breaker for resilience
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+      splitExternalLocalOriginErrors: true
+  
+  # Subsets for blue/green and canary deployments
+  subsets:
+  - name: stable
+    labels:
+      version: stable
+    trafficPolicy:
+      # Enhanced circuit breaker for production traffic
+      outlierDetection:
+        consecutiveGatewayErrors: 3
+        consecutive5xxErrors: 3
+        interval: 15s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 30
+  
+  - name: canary
+    labels:
+      version: canary
+    trafficPolicy:
+      # More lenient circuit breaker for canary testing
+      outlierDetection:
+        consecutiveGatewayErrors: 10
+        consecutive5xxErrors: 10
+        interval: 60s
+        baseEjectionTime: 60s
+        maxEjectionPercent: 70
+  
+  - name: blue
+    labels:
+      version: blue
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 50
+        http:
+          http1MaxPendingRequests: 25
+          http2MaxRequests: 50
+  
+  - name: green
+    labels:
+      version: green
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 50
+        http:
+          http1MaxPendingRequests: 25
+          http2MaxRequests: 50
+
+---
+# Virtual Service for Redis
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: redis-vs
+  namespace: gameforge
+spec:
+  hosts:
+  - redis.gameforge.svc.cluster.local
+  tcp:
+  - match:
+    - port: 6379
+    route:
+    - destination:
+        host: redis.gameforge.svc.cluster.local
+        port:
+          number: 6379
+
+---
+# Destination Rule for Redis
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: redis-dr
+  namespace: gameforge
+spec:
+  host: redis.gameforge.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 5s
+        tcpNoDelay: true
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+
+---
+# Virtual Service for PostgreSQL
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: postgres-vs
+  namespace: gameforge
+spec:
+  hosts:
+  - postgres.gameforge.svc.cluster.local
+  tcp:
+  - match:
+    - port: 5432
+    route:
+    - destination:
+        host: postgres.gameforge.svc.cluster.local
+        port:
+          number: 5432
+
+---
+# Destination Rule for PostgreSQL
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: postgres-dr
+  namespace: gameforge
+spec:
+  host: postgres.gameforge.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 25  # Database connection limits
+        connectTimeout: 10s
+        tcpNoDelay: true
+    outlierDetection:
+      consecutiveGatewayErrors: 3
+      interval: 60s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 50

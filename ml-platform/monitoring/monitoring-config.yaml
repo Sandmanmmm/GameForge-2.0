@@ -1,0 +1,305 @@
+# GameForge ML Monitoring Configuration
+#
+# Configuration for monitoring, drift detection, and alerting systems
+
+# === STORAGE CONFIGURATION ===
+storage:
+  bucket: "gameforge-ml-monitoring"
+  prefix: "monitoring-data"
+  region: "us-west-2"
+
+# === DRIFT DETECTION THRESHOLDS ===
+drift_thresholds:
+  low: 0.1       # Low drift threshold
+  medium: 0.2    # Medium drift threshold  
+  high: 0.3      # High drift threshold
+  critical: 0.5  # Critical drift threshold
+
+# === PERFORMANCE MONITORING THRESHOLDS ===
+performance_thresholds:
+  accuracy_degradation: 0.1    # 10% accuracy drop triggers alert
+  latency_increase: 0.5        # 50% latency increase triggers alert
+  error_rate_increase: 0.05    # 5% error rate increase triggers alert
+  memory_usage_limit: 16       # GB memory usage limit
+  cpu_usage_limit: 0.8         # 80% CPU usage limit
+
+# === MONITORING INTERVALS ===
+monitoring_intervals:
+  drift_detection: 3600        # Run drift detection every hour (seconds)
+  performance_check: 300       # Check performance every 5 minutes
+  baseline_update: 86400       # Update baselines daily
+  cleanup_old_data: 604800     # Clean up old monitoring data weekly
+
+# === ALERTING CONFIGURATION ===
+alerting:
+  
+  # Alert channels
+  channels:
+    - "email"
+    - "slack"
+    - "database"  # Always store in database
+  
+  # Email configuration
+  email:
+    smtp_server: "mail.gameforge.dev"
+    port: 587
+    username: "${EMAIL_USERNAME}"
+    password: "${EMAIL_PASSWORD}"
+    from: "ml-monitoring@gameforge.dev"
+    to:
+      - "ml-team@gameforge.dev"
+      - "platform@gameforge.dev"
+      - "ops@gameforge.dev"
+  
+  # Slack configuration
+  slack:
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+    channels:
+      - "#ml-alerts"
+      - "#platform-alerts"
+    mention_on_critical: true
+    critical_mentions:
+      - "@ml-lead"
+      - "@platform-lead"
+  
+  # Alert escalation rules
+  escalation:
+    
+    # Critical alerts
+    critical:
+      immediate_notify: true
+      channels: ["email", "slack"]
+      escalation_minutes: 15
+      max_escalations: 3
+      
+    # High severity alerts  
+    high:
+      immediate_notify: true
+      channels: ["slack"]
+      escalation_minutes: 30
+      max_escalations: 2
+      
+    # Medium severity alerts
+    medium:
+      immediate_notify: false
+      channels: ["slack"]
+      escalation_minutes: 60
+      max_escalations: 1
+      
+    # Low severity alerts
+    low:
+      immediate_notify: false
+      channels: ["database"]
+      escalation_minutes: null
+      max_escalations: 0
+
+# === DATA RETENTION ===
+data_retention:
+  
+  # Monitoring data retention
+  monitoring_metrics: 90        # days
+  drift_detection_results: 180  # days
+  alert_history: 365            # days
+  baseline_distributions: 730   # days (2 years)
+  
+  # Performance data retention
+  raw_predictions: 30           # days
+  aggregated_metrics: 365       # days
+  model_performance_snapshots: 730  # days
+
+# === BASELINE MANAGEMENT ===
+baseline_management:
+  
+  # Automatic baseline updates
+  auto_update_enabled: true
+  update_frequency_days: 30
+  
+  # Baseline validation
+  min_samples_for_baseline: 1000
+  baseline_stability_check: true
+  
+  # Baseline storage
+  store_multiple_baselines: true
+  max_baselines_per_model: 5
+
+# === FEATURE-SPECIFIC MONITORING ===
+feature_monitoring:
+  
+  # Categorical features
+  categorical:
+    min_category_frequency: 0.01    # Ignore categories < 1%
+    new_category_threshold: 0.05    # Alert if new category > 5%
+    max_categories_to_track: 100
+    
+  # Numerical features  
+  numerical:
+    outlier_detection_enabled: true
+    outlier_threshold_std: 3.0      # 3 standard deviations
+    distribution_bins: 20
+    
+  # Text features
+  text:
+    vocabulary_drift_enabled: true
+    max_vocab_size: 10000
+    min_word_frequency: 5
+
+# === MODEL-SPECIFIC CONFIGURATIONS ===
+model_configs:
+  
+  # Default configuration for all models
+  default:
+    drift_detection_enabled: true
+    performance_monitoring_enabled: true
+    baseline_auto_update: true
+    alert_sensitivity: "medium"
+    
+  # Language models
+  language_models:
+    perplexity_threshold: 4.0
+    bleu_score_threshold: 0.7
+    rouge_threshold: 0.6
+    toxicity_monitoring: true
+    bias_detection: true
+    
+  # Computer vision models
+  vision_models:
+    accuracy_threshold: 0.85
+    precision_threshold: 0.8
+    recall_threshold: 0.8
+    inference_latency_ms: 500
+    
+  # Recommendation models
+  recommendation_models:
+    ndcg_threshold: 0.7
+    map_threshold: 0.6
+    diversity_score_threshold: 0.5
+    freshness_monitoring: true
+
+# === EXTERNAL INTEGRATIONS ===
+integrations:
+  
+  # MLflow integration
+  mlflow:
+    enabled: true
+    tracking_uri: "${MLFLOW_TRACKING_URI}"
+    experiment_prefix: "monitoring"
+    
+  # Weights & Biases
+  wandb:
+    enabled: false
+    project: "gameforge-monitoring"
+    entity: "gameforge"
+    
+  # Prometheus metrics
+  prometheus:
+    enabled: true
+    port: 8000
+    metrics_prefix: "gameforge_ml"
+    
+  # Grafana dashboards
+  grafana:
+    enabled: true
+    dashboard_refresh_interval: "5m"
+    datasource: "prometheus"
+
+# === AUTOMATED REMEDIATION ===
+automated_remediation:
+  
+  # Enable automatic actions
+  enabled: true
+  
+  # Remediation actions
+  actions:
+    
+    # High drift detected
+    high_drift:
+      - "trigger_retraining_pipeline"
+      - "notify_data_team"
+      - "create_incident_ticket"
+      
+    # Performance degradation
+    performance_degradation:
+      - "scale_up_resources"
+      - "trigger_model_rollback"
+      - "notify_platform_team"
+      
+    # Resource exhaustion
+    resource_exhaustion:
+      - "auto_scale_infrastructure"
+      - "throttle_requests"
+      - "notify_ops_team"
+  
+  # Safety limits
+  safety_limits:
+    max_auto_rollbacks_per_day: 3
+    max_auto_scaling_events_per_hour: 5
+    require_human_approval_for:
+      - "model_rollback"
+      - "infrastructure_changes"
+
+# === COMPLIANCE AND AUDITING ===
+compliance:
+  
+  # Audit logging
+  audit_logging:
+    enabled: true
+    log_level: "INFO"
+    include_predictions: false     # PII concerns
+    include_feature_values: false  # PII concerns
+    
+  # Data privacy
+  data_privacy:
+    anonymize_user_ids: true
+    hash_sensitive_features: true
+    pii_detection_enabled: true
+    
+  # Regulatory compliance
+  regulatory:
+    gdpr_compliance: true
+    data_retention_enforcement: true
+    right_to_explanation: true
+    automated_decision_logging: true
+
+# === PERFORMANCE OPTIMIZATION ===
+performance:
+  
+  # Batch processing
+  batch_processing:
+    enabled: true
+    batch_size: 1000
+    processing_interval_seconds: 300
+    
+  # Parallel processing
+  parallel_processing:
+    enabled: true
+    max_workers: 4
+    thread_pool_size: 8
+    
+  # Caching
+  caching:
+    enabled: true
+    cache_ttl_seconds: 3600
+    max_cache_size_mb: 1024
+    
+  # Database optimization
+  database:
+    connection_pool_size: 10
+    query_timeout_seconds: 30
+    batch_insert_size: 1000
+
+# === DEVELOPMENT AND TESTING ===
+development:
+  
+  # Debug mode
+  debug_mode: false
+  verbose_logging: false
+  
+  # Test mode
+  test_mode: false
+  synthetic_data_generation: false
+  
+  # Development overrides
+  dev_overrides:
+    disable_alerts: false
+    mock_external_services: false
+    reduced_thresholds: false

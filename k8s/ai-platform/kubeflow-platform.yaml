@@ -1,0 +1,616 @@
+# KubeFlow Integration for GameForge AI Platform
+# ML pipeline orchestration, experiment tracking, and model versioning
+
+# Kubeflow Central Dashboard
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeflow-central-dashboard
+  namespace: gameforge
+  labels:
+    app: kubeflow-dashboard
+    component: central-dashboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kubeflow-dashboard
+  template:
+    metadata:
+      labels:
+        app: kubeflow-dashboard
+        component: central-dashboard
+    spec:
+      serviceAccountName: kubeflow-dashboard-service-account
+      containers:
+      - name: central-dashboard
+        image: kubeflownotebookswg/centraldashboard:v1.7.0
+        imagePullPolicy: Always
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        
+        # Environment variables
+        env:
+        - name: USERID_HEADER
+          value: "kubeflow-userid"
+        - name: USERID_PREFIX
+          value: ""
+        - name: PROFILES_KFAM_SERVICE_HOST
+          value: "profiles-kfam.kubeflow"
+        - name: PROFILES_KFAM_SERVICE_PORT
+          value: "8081"
+        - name: REGISTRATION_FLOW
+          value: "false"
+        - name: DASHBOARD_CONFIGMAP
+          value: "centraldashboard-config"
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8082
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8082
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        
+        # Ports
+        ports:
+        - containerPort: 8082
+          name: http
+          protocol: TCP
+        
+        # Volume mounts
+        volumeMounts:
+        - name: config
+          mountPath: /etc/config
+          readOnly: true
+      
+      # Volumes
+      volumes:
+      - name: config
+        configMap:
+          name: centraldashboard-config
+      
+      # Security
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+---
+# Kubeflow Central Dashboard Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeflow-central-dashboard
+  namespace: gameforge
+  labels:
+    app: kubeflow-dashboard
+spec:
+  type: ClusterIP
+  selector:
+    app: kubeflow-dashboard
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8082
+    protocol: TCP
+
+---
+# Kubeflow Pipelines API Server
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-pipeline-api-server
+  namespace: gameforge
+  labels:
+    app: ml-pipeline-api-server
+    component: kubeflow-pipelines
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ml-pipeline-api-server
+  template:
+    metadata:
+      labels:
+        app: ml-pipeline-api-server
+        component: kubeflow-pipelines
+    spec:
+      serviceAccountName: ml-pipeline-service-account
+      containers:
+      - name: ml-pipeline-api-server
+        image: gcr.io/ml-pipeline/api-server:2.0.5
+        imagePullPolicy: Always
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        
+        # Environment variables
+        env:
+        - name: OBJECTSTORECONFIG_SECURE
+          value: "false"
+        - name: OBJECTSTORECONFIG_BUCKETNAME
+          value: "mlpipeline"
+        - name: DBCONFIG_USER
+          value: "mlpipeline"
+        - name: DBCONFIG_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: password
+        - name: DBCONFIG_DBNAME
+          value: "mlpipeline"
+        - name: DBCONFIG_HOST
+          value: "mysql"
+        - name: DBCONFIG_PORT
+          value: "3306"
+        - name: OBJECTSTORECONFIG_ACCESSKEY
+          valueFrom:
+            secretKeyRef:
+              name: mlpipeline-minio-artifact
+              key: accesskey
+        - name: OBJECTSTORECONFIG_SECRETACCESSKEY
+          valueFrom:
+            secretKeyRef:
+              name: mlpipeline-minio-artifact
+              key: secretkey
+        - name: OBJECTSTORECONFIG_HOST
+          value: "minio-service"
+        - name: OBJECTSTORECONFIG_PORT
+          value: "9000"
+        - name: MINIO_SERVICE_SERVICE_HOST
+          value: "minio-service"
+        - name: MINIO_SERVICE_SERVICE_PORT
+          value: "9000"
+        - name: KUBEFLOW_USERID_HEADER
+          value: "kubeflow-userid"
+        - name: KUBEFLOW_USERID_PREFIX
+          value: ""
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /apis/v1beta1/healthz
+            port: 8888
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+        
+        readinessProbe:
+          httpGet:
+            path: /apis/v1beta1/healthz
+            port: 8888
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+        
+        # Ports
+        ports:
+        - containerPort: 8888
+          name: http
+          protocol: TCP
+        - containerPort: 8887
+          name: grpc
+          protocol: TCP
+      
+      # Security
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+---
+# ML Pipeline API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-pipeline
+  namespace: gameforge
+  labels:
+    app: ml-pipeline-api-server
+spec:
+  type: ClusterIP
+  selector:
+    app: ml-pipeline-api-server
+  ports:
+  - name: http
+    port: 8888
+    targetPort: 8888
+    protocol: TCP
+  - name: grpc
+    port: 8887
+    targetPort: 8887
+    protocol: TCP
+
+---
+# Kubeflow Notebooks Controller
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notebook-controller
+  namespace: gameforge
+  labels:
+    app: notebook-controller
+    component: kubeflow-notebooks
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notebook-controller
+  template:
+    metadata:
+      labels:
+        app: notebook-controller
+        component: kubeflow-notebooks
+    spec:
+      serviceAccountName: notebook-controller-service-account
+      containers:
+      - name: notebook-controller
+        image: kubeflownotebookswg/notebook-controller:v1.7.0
+        imagePullPolicy: Always
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        
+        # Environment variables
+        env:
+        - name: USE_ISTIO
+          value: "true"
+        - name: ISTIO_GATEWAY
+          value: "kubeflow-gateway.istio-system.svc.cluster.local"
+        - name: CLUSTER_DOMAIN
+          value: "cluster.local"
+        
+        # Command
+        command:
+        - /manager
+        args:
+        - --enable-leader-election
+        - --metrics-addr=127.0.0.1:8080
+        - --webhook-port=9443
+        
+        # Ports
+        ports:
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        
+        # Volume mounts
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+      
+      # Volumes
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: notebook-controller-webhook-certs
+      
+      # Security
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+---
+# KServe for Model Serving
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kserve-controller
+  namespace: gameforge
+  labels:
+    app: kserve-controller
+    component: model-serving
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kserve-controller
+  template:
+    metadata:
+      labels:
+        app: kserve-controller
+        component: model-serving
+    spec:
+      serviceAccountName: kserve-controller-service-account
+      containers:
+      - name: kserve-controller
+        image: kserve/kserve-controller:v0.11.0
+        imagePullPolicy: Always
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+        
+        # Environment variables
+        env:
+        - name: WATCH_NAMESPACE
+          value: ""
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: OPERATOR_NAME
+          value: "kserve-controller"
+        - name: ENABLE_WEBHOOK
+          value: "true"
+        
+        # Command
+        command:
+        - /manager
+        args:
+        - --enable-leader-election
+        - --metrics-addr=127.0.0.1:8080
+        - --webhook-port=9443
+        
+        # Ports
+        ports:
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        
+        # Volume mounts
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+      
+      # Volumes
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: kserve-webhook-certs
+      
+      # Security
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+---
+# Katib for Hyperparameter Tuning
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: katib-controller
+  namespace: gameforge
+  labels:
+    app: katib-controller
+    component: hyperparameter-tuning
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: katib-controller
+  template:
+    metadata:
+      labels:
+        app: katib-controller
+        component: hyperparameter-tuning
+    spec:
+      serviceAccountName: katib-controller-service-account
+      containers:
+      - name: katib-controller
+        image: kubeflowkatib/katib-controller:v0.15.0
+        imagePullPolicy: Always
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        
+        # Environment variables
+        env:
+        - name: KATIB_CORE_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: WEBHOOK_PORT
+          value: "8443"
+        
+        # Command
+        command:
+        - /manager
+        args:
+        - --enable-leader-election
+        - --webhook-port=8443
+        - --trial-resources=Job.v1.batch
+        - --metrics-addr=127.0.0.1:8080
+        
+        # Ports
+        ports:
+        - containerPort: 8443
+          name: webhook
+          protocol: TCP
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        
+        # Volume mounts
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+      
+      # Volumes
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: katib-webhook-certs
+      
+      # Security
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+---
+# Central Dashboard Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: centraldashboard-config
+  namespace: gameforge
+data:
+  settings: |
+    {
+      "DASHBOARD_FORCE_IFRAME": false,
+      "REGISTRATION_FLOW": false,
+      "DASHBOARD_CONFIGMAP": "centraldashboard-config"
+    }
+  links: |
+    {
+      "menuLinks": [
+        {
+          "type": "item",
+          "link": "/pipeline/",
+          "text": "Pipelines",
+          "icon": "kubeflow:pipeline-centered"
+        },
+        {
+          "type": "item", 
+          "link": "/notebook/",
+          "text": "Notebooks",
+          "icon": "kubeflow:notebook"
+        },
+        {
+          "type": "item",
+          "link": "/katib/",
+          "text": "Experiments (AutoML)",
+          "icon": "kubeflow:katib"
+        },
+        {
+          "type": "item",
+          "link": "/models/",
+          "text": "Models",
+          "icon": "kubeflow:models"
+        }
+      ],
+      "externalLinks": [
+        {
+          "type": "item",
+          "link": "http://ray-dashboard-service.gameforge.svc.cluster.local:8265",
+          "text": "Ray Dashboard",
+          "icon": "kubeflow:external-link"
+        },
+        {
+          "type": "item",
+          "link": "http://grafana.monitoring.svc.cluster.local:3000",
+          "text": "Grafana",
+          "icon": "kubeflow:external-link"
+        }
+      ]
+    }
+
+---
+# Service Accounts and RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeflow-dashboard-service-account
+  namespace: gameforge
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ml-pipeline-service-account
+  namespace: gameforge
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: notebook-controller-service-account
+  namespace: gameforge
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kserve-controller-service-account
+  namespace: gameforge
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: katib-controller-service-account
+  namespace: gameforge
+
+---
+# Kubeflow RBAC
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeflow-admin
+rules:
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["*"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeflow-admin-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeflow-admin
+subjects:
+- kind: ServiceAccount
+  name: kubeflow-dashboard-service-account
+  namespace: gameforge
+- kind: ServiceAccount
+  name: ml-pipeline-service-account
+  namespace: gameforge
+- kind: ServiceAccount
+  name: notebook-controller-service-account
+  namespace: gameforge
+- kind: ServiceAccount
+  name: kserve-controller-service-account
+  namespace: gameforge
+- kind: ServiceAccount
+  name: katib-controller-service-account
+  namespace: gameforge

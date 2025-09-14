@@ -1,0 +1,58 @@
+# Ray Cluster Dockerfile optimized for RTX 4090
+ARG PYTHON_VERSION=3.11
+ARG RAY_VERSION=2.8.1
+
+FROM rayproject/ray:${RAY_VERSION}-py${PYTHON_VERSION//.}-cu118
+
+# Install additional dependencies for RTX 4090 optimization
+USER root
+
+# Update package lists and install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    htop \
+    nvtop \
+    redis-server \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install CUDA 12.1 compatibility for RTX 4090
+RUN pip install --no-cache-dir \
+    torch==2.1.0+cu121 \
+    torchvision==0.16.0+cu121 \
+    torchaudio==2.1.0+cu121 \
+    --index-url https://download.pytorch.org/whl/cu121
+
+# Install additional ML libraries optimized for RTX 4090
+RUN pip install --no-cache-dir \
+    transformers==4.35.2 \
+    accelerate==0.25.0 \
+    bitsandbytes==0.41.3 \
+    xformers==0.0.22.post7 \
+    flash-attn==2.3.3 \
+    deepspeed==0.12.4 \
+    ray[tune,train,serve]==2.8.1
+
+# Create Ray working directories
+RUN mkdir -p /tmp/ray /data /workspace/ai
+RUN chown -R ray:ray /tmp/ray /data /workspace
+
+# Switch to ray user for security
+USER ray
+
+# Configure Ray for RTX 4090
+ENV CUDA_VISIBLE_DEVICES=0
+ENV RAY_NUM_GPUS=1
+ENV RAY_GPU_MEMORY_FRACTION=0.8
+ENV RAY_OBJECT_STORE_MEMORY=4000000000
+ENV RAY_PLASMA_DIRECTORY=/tmp/ray
+
+# Expose Ray ports
+EXPOSE 8265 10001 6379
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+    CMD ray status || exit 1
+
+# Default command (will be overridden in docker-compose)
+CMD ["ray", "start", "--head", "--dashboard-host=0.0.0.0", "--block"]

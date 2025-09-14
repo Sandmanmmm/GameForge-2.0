@@ -1,0 +1,15 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: 'default'
+  group_by: ['alertname']
+
+receivers:
+- name: 'default'
+  email_configs:
+  - to: 'admin@gameforge.local'
+    from: 'alertmanager@gameforge.local'
+    smarthost: 'smtp.gmail.com:587'
+
+inhibit_rules: []

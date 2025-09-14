@@ -1,0 +1,358 @@
+# Istio Service Mesh Installation and Configuration
+# Production-ready service mesh setup for GameForge enterprise scalability
+
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: gameforge-control-plane
+  namespace: istio-system
+spec:
+  # Production configuration with enterprise features
+  revision: "1-20-0"
+  
+  values:
+    global:
+      # Network and security configuration
+      network: gameforge-network
+      meshID: gameforge-mesh
+      
+      # Multi-cluster support ready
+      meshNetworks:
+        gameforge-network:
+          endpoints:
+          - fromRegistry: gameforge-registry
+          gateways:
+          - registry_service_name: istio-eastwestgateway.istio-system.svc.cluster.local
+            port: 15443
+      
+      # Proxy configuration for performance
+      proxy:
+        # Resource allocation for production workloads
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "2000m"
+            memory: "1Gi"
+        
+        # High availability settings
+        concurrency: 2
+        
+        # Security settings
+        privileged: false
+        enableCoreDump: false
+        
+        # Logging and metrics
+        logLevel: "warning"
+        componentLogLevel: "misc:error"
+        
+        # Tracing configuration (integrates with existing Jaeger)
+        tracer: "jaeger"
+    
+    # Pilot (Istiod) configuration
+    pilot:
+      # Performance and scaling
+      env:
+        PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION: true
+        PILOT_ENABLE_CROSS_CLUSTER_WORKLOAD_ENTRY: true
+        PILOT_ENABLE_STATUS: true
+        PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING: true
+        EXTERNAL_ISTIOD: false
+        
+      # Resource allocation
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "2Gi"
+        limits:
+          cpu: "2000m"
+          memory: "4Gi"
+      
+      # High availability
+      autoscaleEnabled: true
+      autoscaleMin: 2
+      autoscaleMax: 5
+      cpu:
+        targetAverageUtilization: 80
+    
+    # Gateway configuration
+    gateways:
+      istio-ingressgateway:
+        name: istio-ingressgateway
+        enabled: true
+        
+        # Production scaling
+        autoscaleEnabled: true
+        autoscaleMin: 2
+        autoscaleMax: 5
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        
+        # Service configuration
+        type: LoadBalancer
+        ports:
+        - port: 15021
+          targetPort: 15021
+          name: status-port
+          protocol: TCP
+        - port: 80
+          targetPort: 8080
+          name: http2
+          protocol: TCP
+        - port: 443
+          targetPort: 8443
+          name: https
+          protocol: TCP
+        - port: 15443
+          targetPort: 15443
+          name: tls
+          protocol: TCP
+        
+        # Security and networking
+        env:
+          ISTIO_META_ROUTER_MODE: "sni-dnat"
+          ISTIO_META_REQUESTED_NETWORK_VIEW: "gameforge-network"
+        
+        # Pod security
+        securityContext:
+          runAsUser: 1337
+          runAsGroup: 1337
+          runAsNonRoot: true
+          fsGroup: 1337
+          
+        # Node affinity for high availability
+        nodeSelector: {}
+        tolerations: []
+        
+        # Pod anti-affinity for distribution
+        podAntiAffinityLabelSelector:
+        - key: app
+          operator: In
+          values: istio-ingressgateway
+          topologyKey: "kubernetes.io/hostname"
+      
+      # East-West gateway for multi-cluster communication
+      istio-eastwestgateway:
+        name: istio-eastwestgateway
+        enabled: true
+        label:
+          istio: eastwestgateway
+          app: istio-eastwestgateway
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "2000m"
+            memory: "1Gi"
+        
+        # Service configuration for cross-cluster
+        type: LoadBalancer
+        ports:
+        - port: 15021
+          targetPort: 15021
+          name: status-port
+        - port: 15443
+          targetPort: 15443
+          name: tls
+        
+        # Environment for cross-cluster
+        env:
+          ISTIO_META_ROUTER_MODE: "sni-dnat"
+          ISTIO_META_REQUESTED_NETWORK_VIEW: "gameforge-network"
+  
+  # Component configuration
+  components:
+    pilot:
+      k8s:
+        # High availability deployment
+        replicaCount: 2
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+        
+        # Pod disruption budget
+        podDisruptionBudget:
+          minAvailable: 1
+        
+        # Horizontal Pod Autoscaler
+        hpaSpec:
+          minReplicas: 2
+          maxReplicas: 5
+          metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 80
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 80
+        
+        # Node affinity and pod anti-affinity
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              - matchExpressions:
+                - key: kubernetes.io/arch
+                  operator: In
+                  values:
+                  - amd64
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: istiod
+                topologyKey: kubernetes.io/hostname
+        
+        # Environment variables
+        env:
+          PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION: true
+          PILOT_ENABLE_CROSS_CLUSTER_WORKLOAD_ENTRY: true
+          PILOT_ENABLE_STATUS: true
+          PILOT_TRACE_SAMPLING: 1.0
+          PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING: true
+    
+    ingressGateways:
+    - name: istio-ingressgateway
+      enabled: true
+      k8s:
+        # High availability
+        replicaCount: 2
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        
+        # Horizontal Pod Autoscaler
+        hpaSpec:
+          minReplicas: 2
+          maxReplicas: 5
+          metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 80
+        
+        # Service configuration
+        service:
+          type: LoadBalancer
+          ports:
+          - port: 15021
+            targetPort: 15021
+            name: status-port
+            protocol: TCP
+          - port: 80
+            targetPort: 8080
+            name: http2
+            protocol: TCP
+          - port: 443
+            targetPort: 8443
+            name: https
+            protocol: TCP
+          - port: 15443
+            targetPort: 15443
+            name: tls
+            protocol: TCP
+        
+        # Pod security
+        securityContext:
+          runAsUser: 1337
+          runAsGroup: 1337
+          runAsNonRoot: true
+          fsGroup: 1337
+        
+        # Pod anti-affinity
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: istio-ingressgateway
+                topologyKey: kubernetes.io/hostname
+    
+    - name: istio-eastwestgateway
+      label:
+        istio: eastwestgateway
+        app: istio-eastwestgateway
+      enabled: true
+      k8s:
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "2000m"
+            memory: "1Gi"
+        
+        # Service for cross-cluster communication
+        service:
+          type: LoadBalancer
+          ports:
+          - port: 15021
+            targetPort: 15021
+            name: status-port
+          - port: 15443
+            targetPort: 15443
+            name: tls
+        
+        # Environment
+        env:
+          ISTIO_META_ROUTER_MODE: "sni-dnat"
+          ISTIO_META_REQUESTED_NETWORK_VIEW: "gameforge-network"
+
+---
+# Telemetry v2 configuration for observability
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: gameforge-telemetry
+  namespace: istio-system
+spec:
+  # Apply to all workloads in the mesh
+  metrics:
+  - providers:
+    - name: prometheus
+  - providers:
+    - name: otel
+  
+  tracing:
+  - providers:
+    - name: jaeger
+  
+  accessLogging:
+  - providers:
+    - name: otel

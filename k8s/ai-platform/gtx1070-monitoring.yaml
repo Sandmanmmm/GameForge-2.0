@@ -1,0 +1,456 @@
+# GTX 1070 GPU Monitoring - Local Development Configuration
+# Lightweight monitoring for single GTX 1070 without DCGM
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-smi-exporter
+  namespace: monitoring
+  labels:
+    app: nvidia-smi-exporter
+    component: gtx1070-monitoring
+    gpu-model: gtx1070
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-smi-exporter
+      component: gtx1070-monitoring
+  template:
+    metadata:
+      labels:
+        app: nvidia-smi-exporter
+        component: gtx1070-monitoring
+        gpu-model: gtx1070
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9835"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Deploy on nodes with NVIDIA GPUs
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      
+      # Host access for GPU monitoring
+      hostNetwork: false
+      hostPID: false
+      
+      containers:
+      - name: nvidia-smi-exporter
+        image: utkuozdemir/nvidia_gpu_exporter:1.2.0
+        imagePullPolicy: IfNotPresent
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        
+        # Environment variables for GTX 1070
+        env:
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "0"  # GTX 1070 on device 0
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "utility"
+        
+        # Security context
+        securityContext:
+          privileged: false
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop:
+            - ALL
+        
+        # Ports
+        ports:
+        - name: metrics
+          containerPort: 9835
+          protocol: TCP
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 9835
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9835
+          initialDelaySeconds: 15
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        # Volume mounts for NVIDIA drivers (when available)
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+      
+      # Volumes
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+          type: Directory
+      - name: sys
+        hostPath:
+          path: /sys
+          type: Directory
+      
+      # Tolerations for GPU nodes
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+---
+# NVIDIA SMI Exporter Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: nvidia-smi-exporter
+  namespace: monitoring
+  labels:
+    app: nvidia-smi-exporter
+    component: gtx1070-monitoring
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for DaemonSet
+  selector:
+    app: nvidia-smi-exporter
+    component: gtx1070-monitoring
+  ports:
+  - name: metrics
+    port: 9835
+    targetPort: 9835
+    protocol: TCP
+
+---
+# ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nvidia-smi-exporter
+  namespace: monitoring
+  labels:
+    app: nvidia-smi-exporter
+    component: gtx1070-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-smi-exporter
+      component: gtx1070-monitoring
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scrapeTimeout: 25s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+    - targetLabel: gpu_model
+      replacement: gtx1070
+
+---
+# Custom GPU Metrics Exporter for GTX 1070
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gtx1070-metrics-exporter
+  namespace: monitoring
+  labels:
+    app: gtx1070-metrics
+    component: custom-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gtx1070-metrics
+      component: custom-exporter
+  template:
+    metadata:
+      labels:
+        app: gtx1070-metrics
+        component: custom-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: metrics-exporter
+        image: python:3.9-slim
+        imagePullPolicy: IfNotPresent
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        
+        # Command to run custom metrics exporter
+        command:
+        - python3
+        - /app/gtx1070_exporter.py
+        
+        # Environment variables
+        env:
+        - name: EXPORTER_PORT
+          value: "8080"
+        - name: GPU_MODEL
+          value: "gtx1070"
+        
+        # Ports
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 15
+        
+        # Volume mounts
+        volumeMounts:
+        - name: exporter-code
+          mountPath: /app
+        
+        # Security context
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      
+      # Volumes
+      volumes:
+      - name: exporter-code
+        configMap:
+          name: gtx1070-exporter-code
+          defaultMode: 0755
+
+---
+# Custom Exporter Code
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gtx1070-exporter-code
+  namespace: monitoring
+data:
+  gtx1070_exporter.py: |
+    #!/usr/bin/env python3
+    """
+    Custom GTX 1070 Metrics Exporter
+    Provides synthetic GPU metrics for development
+    """
+    import os
+    import time
+    import random
+    import threading
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from urllib.parse import urlparse
+    
+    class GTX1070MetricsHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed_path = urlparse(self.path)
+            
+            if parsed_path.path == '/metrics':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.end_headers()
+                
+                metrics = self.generate_metrics()
+                self.wfile.write(metrics.encode('utf-8'))
+            
+            elif parsed_path.path == '/health':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'OK')
+            
+            else:
+                self.send_response(404)
+                self.end_headers()
+        
+        def generate_metrics(self):
+            """Generate synthetic GPU metrics for GTX 1070"""
+            timestamp = int(time.time())
+            
+            # Simulate realistic GTX 1070 metrics
+            gpu_utilization = random.uniform(10, 95)  # 10-95% utilization
+            gpu_memory_used = random.uniform(1000, 7500)  # 1-7.5GB used (out of 8GB)
+            gpu_memory_total = 8192  # 8GB total
+            gpu_temperature = random.uniform(35, 80)  # 35-80°C
+            gpu_power = random.uniform(50, 150)  # 50-150W
+            gpu_clock = random.uniform(1500, 1900)  # 1500-1900 MHz
+            memory_clock = random.uniform(4000, 4500)  # 4000-4500 MHz
+            
+            metrics = f'''# HELP nvidia_gpu_utilization GPU utilization percentage
+# TYPE nvidia_gpu_utilization gauge
+nvidia_gpu_utilization{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_utilization:.2f}
+
+# HELP nvidia_gpu_memory_used GPU memory used in MB
+# TYPE nvidia_gpu_memory_used gauge
+nvidia_gpu_memory_used{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_memory_used:.2f}
+
+# HELP nvidia_gpu_memory_total GPU memory total in MB
+# TYPE nvidia_gpu_memory_total gauge
+nvidia_gpu_memory_total{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_memory_total}
+
+# HELP nvidia_gpu_temperature GPU temperature in Celsius
+# TYPE nvidia_gpu_temperature gauge
+nvidia_gpu_temperature{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_temperature:.2f}
+
+# HELP nvidia_gpu_power_draw GPU power draw in Watts
+# TYPE nvidia_gpu_power_draw gauge
+nvidia_gpu_power_draw{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_power:.2f}
+
+# HELP nvidia_gpu_clock_speed GPU clock speed in MHz
+# TYPE nvidia_gpu_clock_speed gauge
+nvidia_gpu_clock_speed{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_clock:.0f}
+
+# HELP nvidia_gpu_memory_clock_speed GPU memory clock speed in MHz
+# TYPE nvidia_gpu_memory_clock_speed gauge
+nvidia_gpu_memory_clock_speed{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {memory_clock:.0f}
+
+# HELP gameforge_ai_inference_active Active AI inference workloads
+# TYPE gameforge_ai_inference_active gauge
+gameforge_ai_inference_active{{model="gameforge-demo",gpu="gtx1070"}} {random.randint(0, 3)}
+
+# HELP gameforge_ai_model_memory_usage Model memory usage in MB
+# TYPE gameforge_ai_model_memory_usage gauge
+gameforge_ai_model_memory_usage{{model="gameforge-demo",gpu="gtx1070"}} {random.uniform(500, 2000):.2f}
+
+# HELP gameforge_ai_inference_latency_seconds Inference latency in seconds
+# TYPE gameforge_ai_inference_latency_seconds histogram
+gameforge_ai_inference_latency_seconds_bucket{{model="gameforge-demo",gpu="gtx1070",le="0.1"}} {random.randint(50, 100)}
+gameforge_ai_inference_latency_seconds_bucket{{model="gameforge-demo",gpu="gtx1070",le="0.5"}} {random.randint(150, 200)}
+gameforge_ai_inference_latency_seconds_bucket{{model="gameforge-demo",gpu="gtx1070",le="1.0"}} {random.randint(250, 300)}
+gameforge_ai_inference_latency_seconds_bucket{{model="gameforge-demo",gpu="gtx1070",le="+Inf"}} {random.randint(300, 350)}
+gameforge_ai_inference_latency_seconds_count{{model="gameforge-demo",gpu="gtx1070"}} {random.randint(1000, 5000)}
+gameforge_ai_inference_latency_seconds_sum{{model="gameforge-demo",gpu="gtx1070"}} {random.uniform(100, 500):.2f}
+'''
+            return metrics
+        
+        def log_message(self, format, *args):
+            # Suppress default logging
+            pass
+    
+    def run_server():
+        port = int(os.environ.get('EXPORTER_PORT', 8080))
+        server = HTTPServer(('0.0.0.0', port), GTX1070MetricsHandler)
+        print(f"GTX 1070 Metrics Exporter started on port {port}")
+        server.serve_forever()
+    
+    if __name__ == '__main__':
+        run_server()
+  
+  requirements.txt: |
+    # No external dependencies needed for basic HTTP server
+
+---
+# PrometheusRule for GTX 1070 Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gtx1070-monitoring-rules
+  namespace: monitoring
+  labels:
+    app: gtx1070-monitoring
+    component: alerts
+spec:
+  groups:
+  - name: gtx1070.rules
+    rules:
+    # GTX 1070 Utilization Alerts
+    - alert: GTX1070HighUtilization
+      expr: nvidia_gpu_utilization{name=~".*GTX 1070.*"} > 85
+      for: 5m
+      labels:
+        severity: warning
+        component: gpu
+        gpu_model: gtx1070
+      annotations:
+        summary: "High GTX 1070 utilization detected"
+        description: "GTX 1070 utilization is {{ $value }}% for more than 5 minutes"
+    
+    # GTX 1070 Memory Alerts
+    - alert: GTX1070HighMemoryUsage
+      expr: (nvidia_gpu_memory_used{name=~".*GTX 1070.*"} / nvidia_gpu_memory_total{name=~".*GTX 1070.*"}) * 100 > 90
+      for: 3m
+      labels:
+        severity: warning
+        component: gpu
+        gpu_model: gtx1070
+      annotations:
+        summary: "High GTX 1070 memory usage detected"
+        description: "GTX 1070 memory usage is {{ $value }}% for more than 3 minutes"
+    
+    # GTX 1070 Temperature Alerts
+    - alert: GTX1070HighTemperature
+      expr: nvidia_gpu_temperature{name=~".*GTX 1070.*"} > 75
+      for: 3m
+      labels:
+        severity: warning
+        component: gpu
+        gpu_model: gtx1070
+      annotations:
+        summary: "High GTX 1070 temperature detected"
+        description: "GTX 1070 temperature is {{ $value }}°C for more than 3 minutes"
+    
+    # GTX 1070 Power Alerts
+    - alert: GTX1070HighPowerDraw
+      expr: nvidia_gpu_power_draw{name=~".*GTX 1070.*"} > 140
+      for: 5m
+      labels:
+        severity: info
+        component: gpu
+        gpu_model: gtx1070
+      annotations:
+        summary: "High GTX 1070 power draw detected"
+        description: "GTX 1070 power draw is {{ $value }}W for more than 5 minutes"
+    
+    # AI Workload Alerts
+    - alert: GameForgeAIInferenceHigh
+      expr: gameforge_ai_inference_active{gpu="gtx1070"} > 2
+      for: 2m
+      labels:
+        severity: info
+        component: ai-workload
+        gpu_model: gtx1070
+      annotations:
+        summary: "High AI inference activity on GTX 1070"
+        description: "{{ $value }} active inference workloads on GTX 1070"

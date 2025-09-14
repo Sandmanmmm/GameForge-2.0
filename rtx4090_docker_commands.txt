@@ -1,0 +1,28 @@
+# GameForge RTX 4090 Docker Setup Commands
+# Run these commands directly on your vast.ai RTX 4090 instance
+
+# 1. Start Docker daemon
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# 2. Check Docker status
+sudo systemctl status docker
+
+# 3. Verify Docker is working
+docker --version
+docker info
+
+# 4. Check what's using port 8080
+netstat -tuln | grep :8080
+
+# 5. Find available ports
+netstat -tuln | grep -E ':(808[0-9]|809[0-9])' || echo "Ports 8080-8099 appear available"
+
+# 6. Test Docker with a simple container
+docker run --rm hello-world
+
+# 7. Check if Docker Compose is available
+docker-compose --version || docker compose version
+
+# 8. Start GameForge Production Deployer on port 8081 (if 8080 is busy)
+python gameforge_production_deployer.py --port 8081

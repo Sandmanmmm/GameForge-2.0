@@ -1,0 +1,128 @@
+# Blue/Green Service Configuration for GameForge
+# This service acts as the traffic router between blue and green deployments
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: gameforge-api
+  namespace: gameforge
+  labels:
+    app: gameforge-api
+    component: api
+    managed-by: blue-green-deployment
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+    prometheus.io/path: "/metrics"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: gameforge-api
+    deployment: blue  # This will be switched between 'blue' and 'green'
+  
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gameforge-api-blue
+  namespace: gameforge
+  labels:
+    app: gameforge-api
+    deployment: blue
+    component: api
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  selector:
+    app: gameforge-api
+    deployment: blue
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gameforge-api-green
+  namespace: gameforge
+  labels:
+    app: gameforge-api
+    deployment: green
+    component: api
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  selector:
+    app: gameforge-api
+    deployment: green
+
+---
+# Ingress for external traffic routing
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gameforge-api-ingress
+  namespace: gameforge
+  labels:
+    app: gameforge-api
+    component: ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"
+    # Rate limiting
+    nginx.ingress.kubernetes.io/rate-limit-cpu: "100m"
+    nginx.ingress.kubernetes.io/rate-limit-memory: "100Mi"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    # Health checks during blue/green switch
+    nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout http_502 http_503 http_504"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "5"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+spec:
+  tls:
+  - hosts:
+    - api.gameforge.local
+    - gameforge.api.local
+    secretName: gameforge-api-tls
+  rules:
+  - host: api.gameforge.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: gameforge-api
+            port:
+              number: 80
+  - host: gameforge.api.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: gameforge-api
+            port:
+              number: 80

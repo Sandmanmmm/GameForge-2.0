@@ -26,7 +26,8 @@ services:
     container_name: gameforge-grafana
     restart: unless-stopped
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Security fix: Remove default password - require explicit configuration
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana:/etc/grafana/provisioning:ro

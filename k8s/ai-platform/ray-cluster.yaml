@@ -1,0 +1,512 @@
+# Ray Cluster Configuration for GameForge AI Platform
+# Enterprise-grade distributed computing with GPU support
+
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: gameforge-ray-cluster
+  namespace: gameforge
+  labels:
+    app: ray-cluster
+    component: ai-platform
+    version: "2.8.0"
+spec:
+  # Ray version and image configuration
+  rayVersion: '2.8.0'
+  
+  # Enable GPU support and autoscaling
+  enableInTreeAutoscaling: true
+  autoscalerOptions:
+    upscalingMode: Default
+    # Scale down delay for cost optimization
+    idleTimeoutSeconds: 300
+    # Resource allocation strategies
+    resources:
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+  
+  # Head node configuration
+  headGroupSpec:
+    # Head node replica (always 1)
+    replicas: 1
+    rayStartParams:
+      dashboard-host: '0.0.0.0'
+      dashboard-port: '8265'
+      metrics-export-port: '8080'
+      # Enable GPU detection
+      num-gpus: '0'  # Head node doesn't need GPU
+      # Distributed training settings
+      redis-password: 'gameforge-ray-password'
+      # Performance tuning
+      object-store-memory: '2000000000'  # 2GB
+      plasma-directory: '/dev/shm'
+    template:
+      spec:
+        # Head node doesn't need GPU
+        nodeSelector:
+          kubernetes.io/arch: amd64
+          # Prefer CPU-optimized nodes for head
+          node-type: cpu-optimized
+        
+        # Priority for head node
+        priorityClassName: high-priority-training
+        
+        # Service account for cluster operations
+        serviceAccountName: ray-head-service-account
+        
+        containers:
+        - name: ray-head
+          image: rayproject/ray:2.8.0-gpu
+          imagePullPolicy: Always
+          
+          # Resource allocation for head node
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          
+          # Environment variables
+          env:
+          - name: RAY_CLUSTER_NAME
+            value: "gameforge-ray-cluster"
+          - name: RAY_HEAD_POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: RAY_REDIS_ADDRESS
+            value: "$(RAY_HEAD_POD_IP):6379"
+          - name: CUDA_VISIBLE_DEVICES
+            value: ""  # Head node doesn't use GPU
+          - name: RAY_GRAFANA_IFRAME_HOST
+            value: "http://grafana.monitoring.svc.cluster.local:3000"
+          - name: RAY_PROMETHEUS_HOST
+            value: "http://prometheus.monitoring.svc.cluster.local:9090"
+          
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8265
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8265
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          # Ports
+          ports:
+          - containerPort: 8265
+            name: dashboard
+            protocol: TCP
+          - containerPort: 8080
+            name: metrics
+            protocol: TCP
+          - containerPort: 6379
+            name: redis
+            protocol: TCP
+          - containerPort: 10001
+            name: client
+            protocol: TCP
+          
+          # Volume mounts
+          volumeMounts:
+          - name: shared-storage
+            mountPath: /shared
+          - name: logs
+            mountPath: /tmp/ray
+          - name: shm
+            mountPath: /dev/shm
+        
+        # Volumes
+        volumes:
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: ray-shared-storage
+        - name: logs
+          emptyDir: {}
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+        
+        # Security context
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+        
+        # Tolerations for dedicated AI nodes
+        tolerations:
+        - key: "ai-workload"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+  
+  # Worker group specifications
+  workerGroupSpecs:
+  # GPU Workers for training and inference
+  - replicas: 2
+    minReplicas: 1
+    maxReplicas: 8
+    groupName: gpu-workers
+    rayStartParams:
+      # GPU workers configuration
+      num-gpus: '1'
+      redis-password: 'gameforge-ray-password'
+      # Memory optimization for GPU workloads
+      object-store-memory: '4000000000'  # 4GB
+    template:
+      spec:
+        # GPU node selection
+        nodeSelector:
+          accelerator: nvidia
+          gpu-type: "tesla"  # Prefer Tesla GPUs for training
+        
+        # High priority for GPU workers
+        priorityClassName: high-priority-training
+        
+        # Affinity rules for GPU distribution
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              - matchExpressions:
+                - key: accelerator
+                  operator: In
+                  values: ["nvidia"]
+                - key: gpu-memory
+                  operator: In
+                  values: ["16gb", "32gb", "40gb"]  # High memory GPUs
+          
+          # Prefer spreading across nodes
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                  - key: app
+                    operator: In
+                    values: ["ray-cluster"]
+                topologyKey: kubernetes.io/hostname
+        
+        # Service account
+        serviceAccountName: ray-worker-service-account
+        
+        containers:
+        - name: ray-worker
+          image: rayproject/ray:2.8.0-gpu
+          imagePullPolicy: Always
+          
+          # GPU resource allocation
+          resources:
+            requests:
+              cpu: "4"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: "32Gi"
+              nvidia.com/gpu: "1"
+          
+          # Environment variables
+          env:
+          - name: RAY_CLUSTER_NAME
+            value: "gameforge-ray-cluster"
+          - name: RAY_HEAD_SERVICE_HOST
+            value: "gameforge-ray-cluster-head-svc"
+          - name: RAY_HEAD_SERVICE_PORT
+            value: "10001"
+          - name: CUDA_VISIBLE_DEVICES
+            value: "0"
+          - name: NVIDIA_VISIBLE_DEVICES
+            value: "0"
+          - name: RAY_GPU_MEMORY_FRACTION
+            value: "0.9"  # Use 90% of GPU memory
+          
+          # Health checks
+          livenessProbe:
+            exec:
+              command:
+              - ray
+              - status
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          
+          # Volume mounts
+          volumeMounts:
+          - name: shared-storage
+            mountPath: /shared
+          - name: logs
+            mountPath: /tmp/ray
+          - name: shm
+            mountPath: /dev/shm
+          - name: model-cache
+            mountPath: /models
+        
+        # Volumes
+        volumes:
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: ray-shared-storage
+        - name: logs
+          emptyDir: {}
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi  # Larger shared memory for GPU workloads
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache-pvc
+        
+        # Security context
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+        
+        # GPU node tolerations
+        tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "ai-workload"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+  
+  # CPU Workers for data processing and coordination
+  - replicas: 4
+    minReplicas: 2
+    maxReplicas: 16
+    groupName: cpu-workers
+    rayStartParams:
+      num-gpus: '0'
+      redis-password: 'gameforge-ray-password'
+      object-store-memory: '2000000000'  # 2GB
+    template:
+      spec:
+        # CPU-optimized nodes
+        nodeSelector:
+          node-type: cpu-optimized
+        
+        # Medium priority for CPU workers
+        priorityClassName: medium-priority-inference
+        
+        # Service account
+        serviceAccountName: ray-worker-service-account
+        
+        containers:
+        - name: ray-worker
+          image: rayproject/ray:2.8.0
+          imagePullPolicy: Always
+          
+          # CPU resource allocation
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          
+          # Environment variables
+          env:
+          - name: RAY_CLUSTER_NAME
+            value: "gameforge-ray-cluster"
+          - name: RAY_HEAD_SERVICE_HOST
+            value: "gameforge-ray-cluster-head-svc"
+          - name: RAY_HEAD_SERVICE_PORT
+            value: "10001"
+          
+          # Health checks
+          livenessProbe:
+            exec:
+              command:
+              - ray
+              - status
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          
+          # Volume mounts
+          volumeMounts:
+          - name: shared-storage
+            mountPath: /shared
+          - name: logs
+            mountPath: /tmp/ray
+        
+        # Volumes
+        volumes:
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: ray-shared-storage
+        - name: logs
+          emptyDir: {}
+        
+        # Security context
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+        
+        # CPU workload tolerations
+        tolerations:
+        - key: "ai-workload"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+
+---
+# Ray Head Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: gameforge-ray-cluster-head-svc
+  namespace: gameforge
+  labels:
+    app: ray-cluster
+    component: head
+spec:
+  type: ClusterIP
+  selector:
+    app: ray-cluster
+    ray.io/node-type: head
+  ports:
+  - name: dashboard
+    port: 8265
+    targetPort: 8265
+    protocol: TCP
+  - name: client
+    port: 10001
+    targetPort: 10001
+    protocol: TCP
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+
+---
+# Ray Dashboard Service (LoadBalancer for external access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-dashboard-service
+  namespace: gameforge
+  labels:
+    app: ray-cluster
+    component: dashboard
+spec:
+  type: LoadBalancer
+  selector:
+    app: ray-cluster
+    ray.io/node-type: head
+  ports:
+  - name: dashboard
+    port: 8265
+    targetPort: 8265
+    protocol: TCP
+
+---
+# Shared Storage for Ray Cluster
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ray-shared-storage
+  namespace: gameforge
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+
+---
+# Model Cache Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-cache-pvc
+  namespace: gameforge
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 500Gi
+  storageClassName: fast-ssd
+
+---
+# Ray Head Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ray-head-service-account
+  namespace: gameforge
+
+---
+# Ray Worker Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ray-worker-service-account
+  namespace: gameforge
+
+---
+# Ray Cluster RBAC
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: gameforge
+  name: ray-cluster-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["ray.io"]
+  resources: ["rayclusters", "rayservices", "rayjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ray-cluster-rolebinding
+  namespace: gameforge
+subjects:
+- kind: ServiceAccount
+  name: ray-head-service-account
+  namespace: gameforge
+- kind: ServiceAccount
+  name: ray-worker-service-account
+  namespace: gameforge
+roleRef:
+  kind: Role
+  name: ray-cluster-role
+  apiGroup: rbac.authorization.k8s.io

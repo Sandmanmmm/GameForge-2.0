@@ -1,0 +1,254 @@
+# GTX 1070 GPU Monitoring - Simplified Version
+# Lightweight monitoring for single GTX 1070 without Prometheus Operator
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gtx1070-metrics-exporter
+  namespace: monitoring
+  labels:
+    app: gtx1070-metrics
+    component: custom-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gtx1070-metrics
+      component: custom-exporter
+  template:
+    metadata:
+      labels:
+        app: gtx1070-metrics
+        component: custom-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: metrics-exporter
+        image: python:3.9-slim
+        imagePullPolicy: IfNotPresent
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        
+        # Command to run custom metrics exporter
+        command:
+        - python3
+        - /app/gtx1070_exporter.py
+        
+        # Environment variables
+        env:
+        - name: EXPORTER_PORT
+          value: "8080"
+        - name: GPU_MODEL
+          value: "gtx1070"
+        
+        # Ports
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 15
+        
+        # Volume mounts
+        volumeMounts:
+        - name: exporter-code
+          mountPath: /app
+        
+        # Security context
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      
+      # Volumes
+      volumes:
+      - name: exporter-code
+        configMap:
+          name: gtx1070-exporter-code
+          defaultMode: 0755
+
+---
+# Custom Exporter Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: gtx1070-metrics-exporter
+  namespace: monitoring
+  labels:
+    app: gtx1070-metrics
+    component: custom-exporter
+spec:
+  type: ClusterIP
+  selector:
+    app: gtx1070-metrics
+    component: custom-exporter
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+
+---
+# NodePort Service for External Access
+apiVersion: v1
+kind: Service
+metadata:
+  name: gtx1070-metrics-external
+  namespace: monitoring
+  labels:
+    app: gtx1070-metrics
+    component: external-access
+spec:
+  type: NodePort
+  selector:
+    app: gtx1070-metrics
+    component: custom-exporter
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+    nodePort: 30835  # Access via localhost:30835
+    protocol: TCP
+
+---
+# Custom Exporter Code
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gtx1070-exporter-code
+  namespace: monitoring
+data:
+  gtx1070_exporter.py: |
+    #!/usr/bin/env python3
+    """
+    Custom GTX 1070 Metrics Exporter
+    Provides synthetic GPU metrics for development
+    """
+    import os
+    import time
+    import random
+    import threading
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from urllib.parse import urlparse
+    
+    class GTX1070MetricsHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed_path = urlparse(self.path)
+            
+            if parsed_path.path == '/metrics':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.end_headers()
+                
+                metrics = self.generate_metrics()
+                self.wfile.write(metrics.encode('utf-8'))
+            
+            elif parsed_path.path == '/health':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'OK')
+            
+            else:
+                self.send_response(404)
+                self.end_headers()
+        
+        def generate_metrics(self):
+            """Generate synthetic GPU metrics for GTX 1070"""
+            timestamp = int(time.time())
+            
+            # Simulate realistic GTX 1070 metrics
+            gpu_utilization = random.uniform(10, 95)  # 10-95% utilization
+            gpu_memory_used = random.uniform(1000, 7500)  # 1-7.5GB used (out of 8GB)
+            gpu_memory_total = 8192  # 8GB total
+            gpu_temperature = random.uniform(35, 80)  # 35-80°C
+            gpu_power = random.uniform(50, 150)  # 50-150W
+            gpu_clock = random.uniform(1500, 1900)  # 1500-1900 MHz
+            memory_clock = random.uniform(4000, 4500)  # 4000-4500 MHz
+            
+            metrics = f'''# HELP nvidia_gpu_utilization GPU utilization percentage
+# TYPE nvidia_gpu_utilization gauge
+nvidia_gpu_utilization{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_utilization:.2f}
+
+# HELP nvidia_gpu_memory_used GPU memory used in MB
+# TYPE nvidia_gpu_memory_used gauge
+nvidia_gpu_memory_used{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_memory_used:.2f}
+
+# HELP nvidia_gpu_memory_total GPU memory total in MB
+# TYPE nvidia_gpu_memory_total gauge
+nvidia_gpu_memory_total{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_memory_total}
+
+# HELP nvidia_gpu_temperature GPU temperature in Celsius
+# TYPE nvidia_gpu_temperature gauge
+nvidia_gpu_temperature{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_temperature:.2f}
+
+# HELP nvidia_gpu_power_draw GPU power draw in Watts
+# TYPE nvidia_gpu_power_draw gauge
+nvidia_gpu_power_draw{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_power:.2f}
+
+# HELP nvidia_gpu_clock_speed GPU clock speed in MHz
+# TYPE nvidia_gpu_clock_speed gauge
+nvidia_gpu_clock_speed{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {gpu_clock:.0f}
+
+# HELP nvidia_gpu_memory_clock_speed GPU memory clock speed in MHz
+# TYPE nvidia_gpu_memory_clock_speed gauge
+nvidia_gpu_memory_clock_speed{{gpu="0",name="GeForce GTX 1070",uuid="GPU-12345678"}} {memory_clock:.0f}
+
+# HELP gameforge_ai_inference_active Active AI inference workloads
+# TYPE gameforge_ai_inference_active gauge
+gameforge_ai_inference_active{{model="gameforge-demo",gpu="gtx1070"}} {random.randint(0, 3)}
+
+# HELP gameforge_ai_model_memory_usage Model memory usage in MB
+# TYPE gameforge_ai_model_memory_usage gauge
+gameforge_ai_model_memory_usage{{model="gameforge-demo",gpu="gtx1070"}} {random.uniform(500, 2000):.2f}
+
+# HELP gameforge_ai_inference_latency_seconds Inference latency in seconds
+# TYPE gameforge_ai_inference_latency_seconds histogram
+gameforge_ai_inference_latency_seconds_bucket{{model="gameforge-demo",gpu="gtx1070",le="0.1"}} {random.randint(50, 100)}
+gameforge_ai_inference_latency_seconds_bucket{{model="gameforge-demo",gpu="gtx1070",le="0.5"}} {random.randint(150, 200)}
+gameforge_ai_inference_latency_seconds_bucket{{model="gameforge-demo",gpu="gtx1070",le="1.0"}} {random.randint(250, 300)}
+gameforge_ai_inference_latency_seconds_bucket{{model="gameforge-demo",gpu="gtx1070",le="+Inf"}} {random.randint(300, 350)}
+gameforge_ai_inference_latency_seconds_count{{model="gameforge-demo",gpu="gtx1070"}} {random.randint(1000, 5000)}
+gameforge_ai_inference_latency_seconds_sum{{model="gameforge-demo",gpu="gtx1070"}} {random.uniform(100, 500):.2f}
+'''
+            return metrics
+        
+        def log_message(self, format, *args):
+            # Suppress default logging
+            pass
+    
+    def run_server():
+        port = int(os.environ.get('EXPORTER_PORT', 8080))
+        server = HTTPServer(('0.0.0.0', port), GTX1070MetricsHandler)
+        print(f"GTX 1070 Metrics Exporter started on port {port}")
+        server.serve_forever()
+    
+    if __name__ == '__main__':
+        run_server()

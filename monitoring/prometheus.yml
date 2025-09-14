@@ -1,0 +1,160 @@
+# Prometheus Configuration for GameForge Production
+# Enhanced with AlertManager integration and comprehensive monitoring
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    cluster: 'gameforge-production'
+    environment: 'production'
+
+# AlertManager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+      timeout: 10s
+      api_version: v2
+
+# Load alerting rules
+rule_files:
+  - "/etc/prometheus/rules/*.yml"
+
+# Scrape configuration
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # AlertManager monitoring
+  - job_name: 'alertmanager'
+    static_configs:
+      - targets: ['alertmanager:9093']
+    scrape_interval: 30s
+
+  # GameForge main application
+  - job_name: 'gameforge-app'
+    static_configs:
+      - targets: ['gameforge-app:8080']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # GPU services - high frequency monitoring
+  - job_name: 'gameforge-gpu-inference'
+    static_configs:
+      - targets: ['gameforge-gpu-inference:8080']
+    scrape_interval: 10s
+    metrics_path: /metrics
+    scrape_timeout: 8s
+
+  - job_name: 'gameforge-gpu-training'
+    static_configs:
+      - targets: ['gameforge-gpu-training:8080']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # Database monitoring
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+
+  # MLflow platform
+  - job_name: 'mlflow-server'
+    static_configs:
+      - targets: ['mlflow-server:5000']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  - job_name: 'mlflow-registry'
+    static_configs:
+      - targets: ['mlflow-registry:8080']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  - job_name: 'mlflow-canary'
+    static_configs:
+      - targets: ['mlflow-canary:8080']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Infrastructure services
+  - job_name: 'elasticsearch'
+    static_configs:
+      - targets: ['elasticsearch:9200']
+    scrape_interval: 60s
+    metrics_path: /_prometheus/metrics
+
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx:80']
+    scrape_interval: 30s
+    metrics_path: /nginx_status
+
+  # Vault monitoring
+  - job_name: 'vault'
+    static_configs:
+      - targets: ['vault:8200']
+    scrape_interval: 60s
+    metrics_path: /v1/sys/metrics
+    params:
+      format: ['prometheus']
+
+  # OpenTelemetry Collector
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8889']
+    scrape_interval: 30s
+
+  # Jaeger metrics
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+    scrape_interval: 60s
+    metrics_path: /metrics
+
+  # Security services
+  - job_name: 'security-scanner'
+    static_configs:
+      - targets: ['security-scanner:8080']
+    scrape_interval: 300s  # 5 minutes - less frequent
+    metrics_path: /metrics
+
+  # Notification service
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['notification-service:8080']
+    scrape_interval: 60s
+    metrics_path: /metrics
+
+  # Docker daemon metrics (if docker metrics are exposed)
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['host.docker.internal:9323']
+    scrape_interval: 60s
+    metrics_path: /metrics
+
+# Storage configuration
+storage:
+  tsdb:
+    retention.time: 30d
+    retention.size: 10GB
+    wal-compression: true
+
+# Remote write configuration (for long-term storage)
+# remote_write:
+#   - url: "https://your-long-term-storage/api/v1/write"
+#     headers:
+#       Authorization: "Bearer <token>"

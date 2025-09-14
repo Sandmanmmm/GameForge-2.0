@@ -1,0 +1,383 @@
+# GameForge ML Archival and Cleanup Configuration
+#
+# Configuration for automated archival, cleanup, and large file management
+
+# === STORAGE CONFIGURATION ===
+storage:
+  archive_bucket: "gameforge-ml-archive"
+  archive_prefix: "archived-artifacts"
+  region: "us-west-2"
+  
+  # Storage classes for different retention periods
+  storage_classes:
+    standard: "STANDARD"           # Frequent access
+    infrequent: "STANDARD_IA"      # Infrequent access
+    glacier: "GLACIER"             # Long-term archive
+    deep_archive: "DEEP_ARCHIVE"   # Compliance archive
+
+# === ARCHIVAL POLICIES ===
+policies:
+  
+  # Model artifacts policy
+  - name: "model_artifacts"
+    description: "Archive old model checkpoints and weights"
+    retention_days: 30             # Archive after 30 days
+    auto_delete_days: 730          # Delete after 2 years
+    storage_class: "standard_ia"
+    compliance_required: true
+    size_threshold_mb: 50          # Only archive files > 50MB
+    file_patterns:
+      - "**/*.pth"
+      - "**/*.pt" 
+      - "**/*.ckpt"
+      - "**/*.pkl"
+      - "**/*.joblib"
+      - "**/*.h5"
+      - "**/*.pb"
+      - "**/*.onnx"
+      - "**/*.safetensors"
+  
+  # Training logs policy
+  - name: "training_logs"
+    description: "Archive training logs and metrics"
+    retention_days: 7              # Archive after 1 week
+    auto_delete_days: 365          # Delete after 1 year
+    storage_class: "infrequent"
+    compliance_required: false
+    file_patterns:
+      - "**/logs/**/*.log"
+      - "**/runs/**/*.csv"
+      - "**/tensorboard/**/*"
+      - "**/wandb/**/*"
+      - "**/mlruns/**/*"
+  
+  # Dataset cache policy
+  - name: "dataset_cache"
+    description: "Archive processed dataset caches"
+    retention_days: 14             # Archive after 2 weeks
+    auto_delete_days: 180          # Delete after 6 months
+    storage_class: "infrequent"
+    compliance_required: false
+    size_threshold_mb: 100         # Only archive files > 100MB
+    file_patterns:
+      - "**/cache/**/*.parquet"
+      - "**/cache/**/*.arrow"
+      - "**/cache/**/*.feather"
+      - "**/processed/**/*.pkl"
+  
+  # Temporary files policy
+  - name: "temporary_files"
+    description: "Clean up temporary and intermediate files"
+    retention_days: 1              # Archive after 1 day
+    auto_delete_days: 30           # Delete after 1 month
+    storage_class: "standard"
+    compliance_required: false
+    file_patterns:
+      - "**/tmp/**/*"
+      - "**/temp/**/*"
+      - "**/.cache/**/*"
+      - "**/scratch/**/*"
+      - "**/*.tmp"
+      - "**/*.temp"
+  
+  # Experiment outputs policy
+  - name: "experiment_outputs"
+    description: "Archive experiment outputs and results"
+    retention_days: 60             # Archive after 2 months
+    auto_delete_days: 1095         # Delete after 3 years
+    storage_class: "glacier"
+    compliance_required: true
+    file_patterns:
+      - "**/experiments/**/*.json"
+      - "**/results/**/*.csv"
+      - "**/outputs/**/*.png"
+      - "**/outputs/**/*.pdf"
+      - "**/reports/**/*"
+  
+  # Docker images policy
+  - name: "docker_images"
+    description: "Archive old Docker images and containers"
+    retention_days: 14             # Archive after 2 weeks
+    auto_delete_days: 180          # Delete after 6 months
+    storage_class: "infrequent"
+    compliance_required: false
+    size_threshold_mb: 500         # Only archive large images
+    file_patterns:
+      - "**/*.tar"
+      - "**/*.tar.gz"
+      - "**/docker-images/**/*"
+
+# === LARGE FILE MANAGEMENT ===
+large_file_management:
+  
+  # Detection thresholds
+  thresholds:
+    warning_mb: 50                 # Warn about files > 50MB
+    migration_mb: 100              # Suggest migration for files > 100MB
+    mandatory_migration_mb: 500    # Force migration for files > 500MB
+  
+  # Git LFS configuration
+  git_lfs:
+    enabled: true
+    auto_track_patterns:
+      - "*.pth"
+      - "*.pt"
+      - "*.ckpt" 
+      - "*.pkl"
+      - "*.h5"
+      - "*.pb"
+      - "*.onnx"
+      - "*.parquet"
+      - "*.zip"
+      - "*.tar.gz"
+    
+  # S3 migration rules
+  s3_migration:
+    auto_migrate_threshold_mb: 200
+    create_pointer_files: true
+    verify_uploads: true
+    retention_policy: "glacier_after_90_days"
+  
+  # Exclusion patterns
+  exclusions:
+    directories:
+      - ".git"
+      - ".venv"
+      - "venv"
+      - "__pycache__"
+      - "node_modules"
+      - ".pytest_cache"
+      - ".mypy_cache"
+    
+    file_patterns:
+      - "*.pyc"
+      - "*.pyo"
+      - "*.pyd"
+      - ".DS_Store"
+      - "Thumbs.db"
+      - "*.swp"
+      - "*.swo"
+
+# === GIT CLEANUP CONFIGURATION ===
+git_cleanup:
+  
+  # History analysis
+  history_analysis:
+    enabled: true
+    deep_scan: true                # Analyze entire git history
+    size_threshold_mb: 10          # Report files > 10MB in history
+    
+  # Cleanup strategies
+  cleanup_strategies:
+    
+    # BFG Repo-Cleaner (recommended)
+    bfg:
+      enabled: true
+      jar_path: "/usr/local/bin/bfg.jar"
+      max_file_size: "100M"
+      
+    # Git filter-branch (fallback)
+    filter_branch:
+      enabled: true
+      aggressive_gc: true
+      
+    # Git filter-repo (modern alternative)
+    filter_repo:
+      enabled: false
+      path: "/usr/local/bin/git-filter-repo"
+  
+  # Safety measures
+  safety:
+    create_backup_branch: true
+    backup_branch_name: "backup-before-cleanup"
+    require_confirmation: true
+    dry_run_first: true
+
+# === AUTOMATED CLEANUP SCHEDULES ===
+automation:
+  
+  # Scheduled cleanup
+  schedules:
+    
+    # Daily cleanup
+    daily:
+      enabled: true
+      time: "02:00"                # 2 AM UTC
+      policies: ["temporary_files"]
+      
+    # Weekly cleanup  
+    weekly:
+      enabled: true
+      day: "sunday"
+      time: "03:00"                # 3 AM UTC on Sundays
+      policies: ["training_logs", "dataset_cache"]
+      
+    # Monthly cleanup
+    monthly:
+      enabled: true
+      day: 1                       # First day of month
+      time: "04:00"                # 4 AM UTC
+      policies: ["model_artifacts", "experiment_outputs"]
+      
+    # Quarterly cleanup
+    quarterly:
+      enabled: true
+      months: [1, 4, 7, 10]        # January, April, July, October
+      day: 15
+      time: "05:00"                # 5 AM UTC
+      policies: ["docker_images"]
+  
+  # Trigger conditions
+  triggers:
+    
+    # Disk space triggers
+    disk_space:
+      enabled: true
+      warning_threshold_percent: 80
+      critical_threshold_percent: 90
+      cleanup_target_percent: 70
+      
+    # File count triggers
+    file_count:
+      enabled: true
+      max_files_per_directory: 10000
+      cleanup_when_exceeded: true
+      
+    # Repository size triggers
+    repository_size:
+      enabled: true
+      warning_size_gb: 5
+      critical_size_gb: 10
+      cleanup_target_gb: 3
+
+# === COMPLIANCE AND RETENTION ===
+compliance:
+  
+  # Regulatory requirements
+  regulatory:
+    gdpr_compliance: true
+    data_retention_audit: true
+    deletion_logs_required: true
+    
+  # Retention enforcement
+  retention_enforcement:
+    enabled: true
+    grace_period_days: 7           # Grace period before forced deletion
+    compliance_check_interval: 24  # Hours
+    
+  # Audit logging
+  audit_logging:
+    enabled: true
+    log_all_operations: true
+    include_file_hashes: true
+    log_retention_days: 2555       # 7 years
+
+# === NOTIFICATIONS ===
+notifications:
+  
+  # Notification channels
+  channels:
+    
+    # Email notifications
+    email:
+      enabled: true
+      smtp_server: "mail.gameforge.dev"
+      from: "ml-archival@gameforge.dev"
+      to:
+        - "ml-team@gameforge.dev"
+        - "platform@gameforge.dev"
+      
+    # Slack notifications
+    slack:
+      enabled: true
+      webhook_url: "${SLACK_WEBHOOK_URL}"
+      channel: "#ml-platform"
+      
+    # Discord notifications
+    discord:
+      enabled: false
+      webhook_url: "${DISCORD_WEBHOOK_URL}"
+  
+  # Notification triggers
+  triggers:
+    
+    # Large cleanup operations
+    large_cleanup:
+      files_threshold: 100
+      size_threshold_gb: 1
+      
+    # Failed operations
+    failures:
+      notify_immediately: true
+      include_error_details: true
+      
+    # Scheduled reports
+    reports:
+      daily_summary: true
+      weekly_detailed: true
+      monthly_statistics: true
+
+# === PERFORMANCE OPTIMIZATION ===
+performance:
+  
+  # Parallel processing
+  parallel_processing:
+    enabled: true
+    max_workers: 4
+    chunk_size: 100
+    
+  # Batch operations
+  batch_operations:
+    enabled: true
+    batch_size: 50
+    batch_delay_seconds: 1
+    
+  # Memory management
+  memory_management:
+    max_memory_usage_mb: 2048
+    garbage_collection_frequency: 100
+    
+  # Network optimization
+  network:
+    max_concurrent_uploads: 5
+    retry_attempts: 3
+    retry_delay_seconds: 5
+    timeout_seconds: 300
+
+# === MONITORING AND METRICS ===
+monitoring:
+  
+  # Metrics collection
+  metrics:
+    enabled: true
+    collection_interval_seconds: 60
+    retention_days: 90
+    
+  # Health checks
+  health_checks:
+    enabled: true
+    check_interval_seconds: 300
+    s3_connectivity: true
+    database_connectivity: true
+    
+  # Alerting
+  alerting:
+    enabled: true
+    failure_threshold: 3
+    recovery_notification: true
+
+# === DEVELOPMENT AND TESTING ===
+development:
+  
+  # Test mode
+  test_mode: false
+  
+  # Mock services
+  mock_s3: false
+  mock_notifications: false
+  
+  # Development overrides
+  dev_overrides:
+    skip_actual_deletion: false
+    verbose_logging: true
+    reduced_batch_sizes: false

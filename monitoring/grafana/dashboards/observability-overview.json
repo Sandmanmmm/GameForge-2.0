@@ -1,0 +1,215 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "GameForge Observability - Traces, Metrics & Logs",
+    "tags": ["gameforge", "observability", "tracing", "ml"],
+    "timezone": "UTC",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Map & Distributed Traces",
+        "type": "jaeger",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+        "datasource": "Jaeger",
+        "targets": [
+          {
+            "query": "gameforge-app",
+            "queryType": "search"
+          }
+        ],
+        "options": {
+          "showServiceMap": true,
+          "showTracesList": true
+        }
+      },
+      {
+        "id": 2,
+        "title": "Request Rate by Service",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{service_name=~\"gameforge.*\"}[5m])) by (service_name)",
+            "legendFormat": "{{service_name}}"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "GPU Inference Latency (P95)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(inference_duration_seconds_bucket{service_name=\"gameforge-gpu-inference\"}[5m])) by (le))",
+            "legendFormat": "P95 Latency"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 3}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Model Training Progress",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "training_epochs_completed{service_name=\"gameforge-gpu-training\"}",
+            "legendFormat": "Epochs Completed"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Error Rate",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 8},
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{status=~\"4..|5..\",service_name=~\"gameforge.*\"}[5m])) / sum(rate(http_requests_total{service_name=~\"gameforge.*\"}[5m])) * 100",
+            "legendFormat": "Error Rate %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 5}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Trace Analysis - Request Duration Heatmap",
+        "type": "heatmap",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "sum(rate(http_request_duration_seconds_bucket{service_name=~\"gameforge.*\"}[5m])) by (le, service_name)",
+            "legendFormat": "{{service_name}}"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "GPU Utilization Over Time",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "gpu_utilization{service_name=~\"gameforge-gpu.*\"}",
+            "legendFormat": "{{service_name}} - GPU {{gpu_id}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "MLflow Model Registry Activity",
+        "type": "timeseries",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 20},
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "rate(mlflow_model_downloads_total[5m])",
+            "legendFormat": "Model Downloads/sec"
+          },
+          {
+            "expr": "rate(mlflow_model_uploads_total[5m])",
+            "legendFormat": "Model Uploads/sec"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "OpenTelemetry Collector Health",
+        "type": "timeseries",
+        "gridPos": {"h": 6, "w": 12, "x": 12, "y": 20},
+        "datasource": "OTel Collector",
+        "targets": [
+          {
+            "expr": "otelcol_receiver_accepted_spans",
+            "legendFormat": "Spans Received"
+          },
+          {
+            "expr": "otelcol_exporter_sent_spans",
+            "legendFormat": "Spans Exported"
+          },
+          {
+            "expr": "otelcol_processor_dropped_spans",
+            "legendFormat": "Spans Dropped"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Recent Application Logs with Trace Correlation",
+        "type": "logs",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 26},
+        "datasource": "Elasticsearch",
+        "targets": [
+          {
+            "query": "service.name:gameforge* AND level:(ERROR OR WARN)",
+            "timeField": "@timestamp"
+          }
+        ],
+        "options": {
+          "showLabels": true,
+          "showCommonLabels": false,
+          "wrapLogMessage": true,
+          "enableLogDetails": true,
+          "sortOrder": "Descending"
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "schemaVersion": 36,
+    "version": 1,
+    "links": [
+      {
+        "title": "Jaeger UI",
+        "url": "http://jaeger.gameforge.local:16686",
+        "type": "link",
+        "icon": "external link"
+      },
+      {
+        "title": "MLflow Tracking",
+        "url": "http://mlflow.gameforge.local:5000",
+        "type": "link",
+        "icon": "external link"
+      }
+    ]
+  }
+}

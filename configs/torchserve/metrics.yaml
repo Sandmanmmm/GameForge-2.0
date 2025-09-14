@@ -1,0 +1,126 @@
+# TorchServe Metrics Configuration for RTX 4090
+# Comprehensive monitoring for cloud GPU deployment
+
+metrics:
+  # =============================================================================
+  # GPU Performance Metrics
+  # =============================================================================
+  counter:
+    - name: "Requests2XX"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "ModelName"]
+    - name: "Requests4XX" 
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "ModelName"]
+    - name: "Requests5XX"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "ModelName"]
+    - name: "ModelLoadCount"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "ModelName"]
+    - name: "ModelUnloadCount"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "ModelName"]
+  
+  # =============================================================================
+  # Resource Utilization Metrics
+  # =============================================================================
+  gauge:
+    - name: "CPUUtilization"
+      unit: "Percent"
+      dimensions: ["Level", "Hostname"]
+    - name: "MemoryUtilization"
+      unit: "Percent"
+      dimensions: ["Level", "Hostname"]
+    - name: "DiskUtilization"
+      unit: "Percent"
+      dimensions: ["Level", "Hostname"]
+    - name: "GPUUtilization"
+      unit: "Percent"
+      dimensions: ["Level", "Hostname", "DeviceId"]
+    - name: "GPUMemoryUtilization"
+      unit: "Percent"
+      dimensions: ["Level", "Hostname", "DeviceId"]
+    - name: "GPUMemoryUsed"
+      unit: "MB"
+      dimensions: ["Level", "Hostname", "DeviceId"]
+    - name: "WorkerThreads"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "ModelName"]
+    - name: "QueueTime"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelName"]
+  
+  # =============================================================================
+  # Performance and Latency Metrics
+  # =============================================================================
+  histogram:
+    - name: "InferenceLatency"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelName", "ModelVersion"]
+    - name: "InitializeCallLatency"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelName", "ModelVersion"]
+    - name: "PreprocessCallLatency"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelName", "ModelVersion"]
+    - name: "InferenceCallLatency"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelName", "ModelVersion"]
+    - name: "PostprocessCallLatency"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelName", "ModelVersion"]
+    - name: "PredictionTime"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelName", "ModelVersion"]
+    - name: "HandlerTime"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelName", "ModelVersion"]
+  
+  # =============================================================================
+  # RTX 4090 Specific Metrics
+  # =============================================================================
+  gauge:
+    - name: "RTX4090Temperature"
+      unit: "Celsius"
+      dimensions: ["Level", "Hostname", "DeviceId"]
+    - name: "RTX4090PowerDraw"
+      unit: "Watts"
+      dimensions: ["Level", "Hostname", "DeviceId"]
+    - name: "RTX4090FanSpeed"
+      unit: "Percent"
+      dimensions: ["Level", "Hostname", "DeviceId"]
+    - name: "VRAMUsage"
+      unit: "MB"
+      dimensions: ["Level", "Hostname", "DeviceId"]
+    - name: "CUDACores"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "DeviceId"]
+    - name: "TensorCores"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "DeviceId"]
+  
+  # =============================================================================
+  # Model-Specific Metrics
+  # =============================================================================
+  histogram:
+    - name: "StableDiffusionGenerationTime"
+      unit: "Seconds"
+      dimensions: ["Level", "Hostname", "ModelVersion", "ImageSize"]
+    - name: "LLMTokenGenerationTime"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelVersion", "SequenceLength"]
+    - name: "ImageClassificationTime"
+      unit: "Milliseconds"
+      dimensions: ["Level", "Hostname", "ModelVersion", "BatchSize"]
+  
+  counter:
+    - name: "TokensGenerated"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "ModelName"]
+    - name: "ImagesGenerated"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "ModelName"]
+    - name: "ClassificationRequests"
+      unit: "Count"
+      dimensions: ["Level", "Hostname", "ModelName"]

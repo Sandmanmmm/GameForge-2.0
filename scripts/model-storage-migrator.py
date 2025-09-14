@@ -434,10 +434,21 @@ class ModelUploader:
         """Upload to MinIO storage"""
         minio_config = self.registry["storage_backends"]["minio"]
         
+        # Security fix: Remove hardcoded credentials - fail securely
+        access_key = os.getenv("MINIO_ACCESS_KEY")
+        secret_key = os.getenv("MINIO_SECRET_KEY")
+        
+        if not access_key or not secret_key:
+            raise ValueError(
+                "MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set in "
+                "environment variables. For security reasons, no default "
+                "credentials are provided."
+            )
+        
         client = Minio(
             minio_config["endpoint"].replace("http://", "").replace("https://", ""),
-            access_key=os.getenv("MINIO_ACCESS_KEY", "admin"),
-            secret_key=os.getenv("MINIO_SECRET_KEY", "password"),
+            access_key=access_key,
+            secret_key=secret_key,
             secure=False
         )
         
@@ -653,8 +664,9 @@ exec "$@"
                     "image": "minio/minio:latest",
                     "command": "server /data --console-address :9001",
                     "environment": [
-                        "MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-admin}",
-                        "MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-password123}"
+                        # Security fix: Remove hardcoded defaults
+                        "MINIO_ROOT_USER=${MINIO_ACCESS_KEY}",
+                        "MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}"
                     ],
                     "ports": ["9000:9000", "9001:9001"],
                     "volumes": ["minio-data:/data"],

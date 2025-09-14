@@ -1,0 +1,52 @@
+# TorchServe Dockerfile optimized for RTX 4090 (24GB VRAM)
+ARG CUDA_VERSION=12.1
+ARG TORCH_VERSION=2.1.0
+
+FROM pytorch/torchserve:0.8.2-gpu
+
+# Install additional dependencies for RTX 4090 optimization
+USER root
+
+# Update package lists and install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    htop \
+    nvtop \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install CUDA 12.1 compatibility libraries for RTX 4090
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/libcudnn8_8.6.0.163-1+cuda12.0_amd64.deb && \
+    dpkg -i libcudnn8_8.6.0.163-1+cuda12.0_amd64.deb && \
+    rm libcudnn8_8.6.0.163-1+cuda12.0_amd64.deb
+
+# Create optimized TorchServe configuration for RTX 4090
+RUN mkdir -p /opt/torchserve/config
+COPY configs/torchserve/ts.config /opt/torchserve/ts.config
+
+# Set up model store directory
+RUN mkdir -p /opt/torchserve/model-store /opt/torchserve/logs
+RUN chown -R model-server:model-server /opt/torchserve
+
+# Switch back to model-server user for security
+USER model-server
+
+# Configure PyTorch for RTX 4090 (Ada Lovelace architecture)
+ENV TORCH_CUDA_ARCH_LIST="8.9"
+ENV PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:2048,expandable_segments:True"
+ENV CUDA_VISIBLE_DEVICES=0
+
+# Expose TorchServe ports
+EXPOSE 8080 8081 8082
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=120s \
+    CMD curl -f http://localhost:8080/ping || exit 1
+
+# Start TorchServe with optimized configuration
+CMD ["torchserve", \
+     "--start", \
+     "--ts-config", "/opt/torchserve/ts.config", \
+     "--model-store", "/opt/torchserve/model-store", \
+     "--models", "all", \
+     "--foreground"]

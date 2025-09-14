@@ -1,0 +1,491 @@
+# Ray Cluster for GTX 1070 - Local Development Configuration
+# Optimized for single GPU development and testing
+
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: ray-cluster-gtx1070
+  namespace: gameforge
+  labels:
+    app: ray-cluster
+    gpu-model: gtx1070
+    environment: development
+spec:
+  # Ray version compatible with GTX 1070
+  rayVersion: "2.6.0"
+  
+  # Enable in-tree autoscaling
+  enableInTreeAutoscaling: true
+  
+  # Head node configuration
+  headGroupSpec:
+    serviceType: ClusterIP
+    enableIngress: false
+    rayStartParams:
+      dashboard-host: "0.0.0.0"
+      dashboard-port: "8265"
+      object-manager-port: "8076"
+      node-manager-port: "8077"
+      gcs-server-port: "8078"
+      redis-password: "gameforge-ray-secret"
+      num-cpus: "2"  # Reserve CPUs for head node
+      block: "true"
+    
+    # Head node template
+    template:
+      metadata:
+        labels:
+          app: ray-head
+          gpu-model: gtx1070
+          component: head-node
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "8080"
+      spec:
+        containers:
+        - name: ray-head
+          image: rayproject/ray:2.6.0-gpu
+          imagePullPolicy: IfNotPresent
+          
+          # Head node resources (no GPU needed)
+          resources:
+            requests:
+              cpu: "1"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          
+          # Environment variables
+          env:
+          - name: RAY_DISABLE_IMPORT_WARNING
+            value: "1"
+          - name: RAY_ADDRESS
+            value: "127.0.0.1:10001"
+          - name: RAY_USAGE_STATS_ENABLED
+            value: "0"
+          - name: RAY_SERVE_ENABLE_EXPERIMENTAL_STREAMING
+            value: "1"
+          
+          # Ports
+          ports:
+          - containerPort: 8265
+            name: dashboard
+          - containerPort: 10001
+            name: client
+          - containerPort: 8000
+            name: serve
+          - containerPort: 8076
+            name: object-mgr
+          - containerPort: 8077
+            name: node-mgr
+          - containerPort: 8078
+            name: gcs
+          - containerPort: 8080
+            name: metrics
+          
+          # Volume mounts
+          volumeMounts:
+          - name: ray-logs
+            mountPath: /tmp/ray
+          - name: shared-storage
+            mountPath: /shared
+          
+          # Lifecycle management
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "ray stop"]
+          
+          # Security context
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+        
+        # Service account
+        serviceAccountName: ray-cluster-service-account
+        
+        # Volumes
+        volumes:
+        - name: ray-logs
+          emptyDir: {}
+        - name: shared-storage
+          emptyDir:
+            sizeLimit: 10Gi
+        
+        # Node selector for local development
+        nodeSelector:
+          kubernetes.io/arch: amd64
+
+  # Worker group for GTX 1070
+  workerGroupSpecs:
+  - groupName: gtx1070-workers
+    replicas: 1  # Single worker for local GTX 1070
+    minReplicas: 0
+    maxReplicas: 2  # Scale up to 2 workers max
+    
+    rayStartParams:
+      object-manager-port: "8076"
+      node-manager-port: "8077"
+      redis-password: "gameforge-ray-secret"
+      num-cpus: "6"      # Use 6 CPU cores for worker
+      num-gpus: "1"      # GTX 1070 GPU
+      memory: "12000000000"  # ~12GB RAM for worker
+      block: "true"
+    
+    # Worker template
+    template:
+      metadata:
+        labels:
+          app: ray-worker
+          gpu-model: gtx1070
+          component: gpu-worker
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "8080"
+      spec:
+        containers:
+        - name: ray-worker
+          image: rayproject/ray:2.6.0-gpu
+          imagePullPolicy: IfNotPresent
+          
+          # GTX 1070 worker resources
+          resources:
+            requests:
+              cpu: "4"
+              memory: "8Gi"
+              # nvidia.com/gpu: "1"  # Uncomment when GPU operator available
+            limits:
+              cpu: "8"
+              memory: "16Gi"
+              # nvidia.com/gpu: "1"
+          
+          # Environment variables for GTX 1070
+          env:
+          - name: RAY_DISABLE_IMPORT_WARNING
+            value: "1"
+          - name: CUDA_VISIBLE_DEVICES
+            value: "0"  # GTX 1070 on device 0
+          - name: NVIDIA_VISIBLE_DEVICES
+            value: "0"
+          - name: RAY_USAGE_STATS_ENABLED
+            value: "0"
+          - name: PYTORCH_CUDA_ALLOC_CONF
+            value: "max_split_size_mb:512"  # Optimize for 8GB VRAM
+          - name: RAY_OBJECT_STORE_ALLOW_SLOW_STORAGE
+            value: "1"
+          
+          # Ports
+          ports:
+          - containerPort: 8076
+            name: object-mgr
+          - containerPort: 8077
+            name: node-mgr
+          - containerPort: 8080
+            name: metrics
+          
+          # Volume mounts
+          volumeMounts:
+          - name: ray-logs
+            mountPath: /tmp/ray
+          - name: shared-storage
+            mountPath: /shared
+          
+          # Lifecycle management
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "ray stop"]
+          
+          # Security context
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+        
+        # Volumes
+        volumes:
+        - name: ray-logs
+          emptyDir: {}
+        - name: shared-storage
+          emptyDir:
+            sizeLimit: 5Gi
+        
+        # Service account
+        serviceAccountName: ray-cluster-service-account
+        
+        # Node selector
+        nodeSelector:
+          kubernetes.io/arch: amd64
+        
+        # Tolerations for GPU nodes (when GPU operator is available)
+        # tolerations:
+        # - key: "nvidia.com/gpu"
+        #   operator: "Exists"
+        #   effect: "NoSchedule"
+
+---
+# Ray Cluster Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ray-cluster-service-account
+  namespace: gameforge
+
+---
+# Ray Head Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-head-gtx1070
+  namespace: gameforge
+  labels:
+    app: ray-head
+    gpu-model: gtx1070
+spec:
+  type: ClusterIP
+  selector:
+    app: ray-head
+    gpu-model: gtx1070
+  ports:
+  - name: dashboard
+    port: 8265
+    targetPort: 8265
+  - name: client
+    port: 10001
+    targetPort: 10001
+  - name: serve
+    port: 8000
+    targetPort: 8000
+
+---
+# Ray Dashboard NodePort Service for External Access
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-dashboard-external
+  namespace: gameforge
+  labels:
+    app: ray-dashboard
+    component: external-access
+spec:
+  type: NodePort
+  selector:
+    app: ray-head
+    gpu-model: gtx1070
+  ports:
+  - name: dashboard
+    port: 8265
+    targetPort: 8265
+    nodePort: 30265  # Access via localhost:30265
+  - name: serve
+    port: 8000
+    targetPort: 8000
+    nodePort: 30800  # Ray Serve via localhost:30800
+
+---
+# RBAC for Ray Cluster
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ray-cluster-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ray-cluster-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ray-cluster-role
+subjects:
+- kind: ServiceAccount
+  name: ray-cluster-service-account
+  namespace: gameforge
+
+---
+# ConfigMap for Ray Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ray-gtx1070-config
+  namespace: gameforge
+data:
+  ray.conf: |
+    # Ray Configuration for GTX 1070
+    [ray]
+    # Object store configuration
+    object_store_memory = 2000000000  # 2GB object store
+    
+    # GPU configuration
+    num_gpus = 1
+    gpu_memory_fraction = 0.8  # Use 80% of GTX 1070's 8GB
+    
+    # Worker configuration
+    num_cpus = 6
+    memory = 12000000000  # 12GB RAM
+    
+    # Networking
+    redis_password = gameforge-ray-secret
+    dashboard_host = 0.0.0.0
+    dashboard_port = 8265
+    
+    # Logging
+    log_to_driver = false
+    
+    # Development settings
+    disable_import_warning = true
+    usage_stats_enabled = false
+
+---
+# Demo Ray Job for GTX 1070
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ray-demo-job
+  namespace: gameforge
+data:
+  demo_job.py: |
+    #!/usr/bin/env python3
+    """
+    Demo Ray job for GTX 1070 testing
+    """
+    import ray
+    import torch
+    import numpy as np
+    import time
+    from typing import List
+    
+    @ray.remote
+    class GPUActor:
+        """Ray actor that uses GPU for computation"""
+        
+        def __init__(self):
+            # Check if CUDA is available
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            print(f"GPUActor initialized on device: {self.device}")
+            
+            if torch.cuda.is_available():
+                print(f"GPU: {torch.cuda.get_device_name()}")
+                print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        
+        def gpu_task(self, size: int = 1000):
+            """Perform a GPU computation task"""
+            start_time = time.time()
+            
+            # Create random tensors
+            a = torch.randn(size, size, device=self.device)
+            b = torch.randn(size, size, device=self.device)
+            
+            # Matrix multiplication
+            c = torch.matmul(a, b)
+            
+            # Add some computation
+            result = torch.sum(c)
+            
+            end_time = time.time()
+            
+            return {
+                "result": float(result),
+                "device": str(self.device),
+                "computation_time": end_time - start_time,
+                "matrix_size": size
+            }
+    
+    @ray.remote
+    def cpu_task(n: int):
+        """CPU-based task"""
+        start_time = time.time()
+        result = sum(i * i for i in range(n))
+        end_time = time.time()
+        
+        return {
+            "result": result,
+            "computation_time": end_time - start_time,
+            "task_size": n
+        }
+    
+    def main():
+        """Main demo function"""
+        print("Starting Ray GTX 1070 Demo...")
+        
+        # Initialize Ray
+        ray.init(address="ray://ray-head-gtx1070.gameforge.svc.cluster.local:10001")
+        
+        print(f"Ray cluster resources: {ray.cluster_resources()}")
+        
+        # Create GPU actor
+        gpu_actor = GPUActor.remote()
+        
+        # Run GPU tasks
+        print("\n=== GPU Tasks ===")
+        gpu_futures = []
+        for i in range(3):
+            size = 500 + i * 200  # Increasing matrix sizes
+            future = gpu_actor.gpu_task.remote(size)
+            gpu_futures.append(future)
+        
+        gpu_results = ray.get(gpu_futures)
+        for i, result in enumerate(gpu_results):
+            print(f"GPU Task {i+1}: {result}")
+        
+        # Run CPU tasks in parallel
+        print("\n=== CPU Tasks ===")
+        cpu_futures = [cpu_task.remote(1000000 + i * 500000) for i in range(4)]
+        cpu_results = ray.get(cpu_futures)
+        
+        for i, result in enumerate(cpu_results):
+            print(f"CPU Task {i+1}: {result}")
+        
+        # Cleanup
+        ray.shutdown()
+        print("\nDemo completed successfully!")
+    
+    if __name__ == "__main__":
+        main()
+
+---
+# Job to Run Ray Demo
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ray-gtx1070-demo
+  namespace: gameforge
+spec:
+  template:
+    spec:
+      containers:
+      - name: ray-demo
+        image: rayproject/ray:2.6.0-gpu
+        command:
+        - python3
+        - /demo/demo_job.py
+        env:
+        - name: RAY_ADDRESS
+          value: "ray://ray-head-gtx1070.gameforge.svc.cluster.local:10001"
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        volumeMounts:
+        - name: demo-scripts
+          mountPath: /demo
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+      volumes:
+      - name: demo-scripts
+        configMap:
+          name: ray-demo-job
+          defaultMode: 0755
+      restartPolicy: OnFailure
+  backoffLimit: 3

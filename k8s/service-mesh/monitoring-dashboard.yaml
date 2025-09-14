@@ -1,0 +1,509 @@
+# Kiali Dashboard Configuration for GameForge Service Mesh
+# Comprehensive service topology visualization and monitoring
+
+apiVersion: kiali.io/v1alpha1
+kind: Kiali
+metadata:
+  name: gameforge-kiali
+  namespace: istio-system
+  labels:
+    app: kiali
+    version: "v1.74"
+spec:
+  # Installation configuration
+  installation_tag: "v1.74.0"
+  istio_namespace: "istio-system"
+  
+  # Authentication configuration
+  auth:
+    strategy: "anonymous"  # For internal use, can be changed to OIDC for production
+    
+  # External services configuration
+  external_services:
+    # Prometheus integration (existing GameForge Prometheus)
+    prometheus:
+      url: "http://prometheus.monitoring.svc.cluster.local:9090"
+      auth:
+        type: "none"
+      cache_duration: 300
+      cache_enabled: true
+      
+    # Grafana integration
+    grafana:
+      enabled: true
+      url: "http://grafana.monitoring.svc.cluster.local:3000"
+      in_cluster_url: "http://grafana.monitoring.svc.cluster.local:3000"
+      auth:
+        type: "none"
+      dashboards:
+      - name: "Istio Service Mesh Dashboard"
+        variables:
+          namespace: "var-namespace"
+          service: "var-service"
+      
+    # Jaeger integration (existing GameForge Jaeger)
+    tracing:
+      enabled: true
+      in_cluster_url: "http://jaeger-query.monitoring.svc.cluster.local:16686"
+      url: "http://jaeger-query.monitoring.svc.cluster.local:16686"
+      use_grpc: true
+      whitelist_istio_system: ["jaeger-query", "jaeger-collector", "jaeger-agent"]
+      
+  # API configuration
+  api:
+    namespaces:
+      exclude:
+      - "kube-.*"
+      - "openshift.*"
+      include:
+      - "gameforge"
+      - "istio-system"
+      - "monitoring"
+      label_selector_exclude: "kiali.io/member-of!=gameforge"
+      
+  # Deployment configuration
+  deployment:
+    # High availability
+    replicas: 2
+    
+    # Resource allocation
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+    
+    # Security context
+    security_context:
+      run_as_non_root: true
+      run_as_user: 1001
+      fs_group: 1001
+    
+    # Node placement
+    node_selector: {}
+    tolerations: []
+    
+    # Pod anti-affinity for distribution
+    affinity:
+      pod_anti_affinity:
+        preferred_during_scheduling_ignored_during_execution:
+        - weight: 100
+          pod_affinity_term:
+            label_selector:
+              match_labels:
+                app: kiali
+            topology_key: kubernetes.io/hostname
+    
+    # Environment variables
+    environment:
+      LOG_LEVEL: "info"
+      LOG_FORMAT: "text"
+      TIME_ZONE: "UTC"
+      
+    # Volume mounts for configuration
+    volume_mounts:
+    - name: kiali-configuration
+      mount_path: "/kiali-configuration"
+    - name: kiali-secret
+      mount_path: "/kiali-secret"
+    
+  # Server configuration
+  server:
+    port: 20001
+    metrics_port: 9090
+    metrics_enabled: true
+    web_root: "/kiali"
+    gzip_enabled: true
+    cors_allow_all: false
+    web_history_mode: ""
+    
+  # Identity configuration
+  identity:
+    cert_file: ""
+    private_key_file: ""
+    
+  # Login token configuration
+  login_token:
+    signing_key: ""
+    expiration_seconds: 86400
+
+---
+# Kiali Service for Load Balancer Access
+apiVersion: v1
+kind: Service
+metadata:
+  name: kiali-loadbalancer
+  namespace: istio-system
+  labels:
+    app: kiali
+    service: kiali-loadbalancer
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: 20001
+    protocol: TCP
+  selector:
+    app: kiali
+
+---
+# Kiali ConfigMap for Custom Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kiali-config
+  namespace: istio-system
+  labels:
+    app: kiali
+data:
+  config.yaml: |
+    server:
+      port: 20001
+      metrics_port: 9090
+      metrics_enabled: true
+      web_root: "/kiali"
+      
+    auth:
+      strategy: "anonymous"
+      
+    deployment:
+      accessible_namespaces:
+      - "gameforge"
+      - "istio-system"
+      - "monitoring"
+      
+    external_services:
+      prometheus:
+        url: "http://prometheus.monitoring.svc.cluster.local:9090"
+      grafana:
+        enabled: true
+        url: "http://grafana.monitoring.svc.cluster.local:3000"
+      tracing:
+        enabled: true
+        in_cluster_url: "http://jaeger-query.monitoring.svc.cluster.local:16686"
+        
+    istio_labels:
+      app_label_name: "app"
+      injection_label_name: "istio-injection"
+      injection_label_rev: "istio.io/rev"
+      version_label_name: "version"
+      
+    health_config:
+      rate:
+      - namespace: "gameforge"
+        kind: "app"
+        name: "gameforge-api"
+        tolerance:
+        - code: "5XX"
+          degraded: 5
+          failure: 10
+        - code: "4XX"
+          degraded: 10
+          failure: 20
+
+---
+# Enhanced Grafana Dashboard for Service Mesh
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gameforge-mesh-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  gameforge-service-mesh.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "GameForge Service Mesh Overview",
+        "tags": ["gameforge", "istio", "service-mesh"],
+        "style": "dark",
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(rate(istio_requests_total{destination_namespace=\"gameforge\"}[5m])) by (destination_service_name)",
+                "legendFormat": "{{destination_service_name}}"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Requests/sec",
+                "min": 0
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Success Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sum(rate(istio_requests_total{destination_namespace=\"gameforge\",response_code!~\"5.*\"}[5m])) / sum(rate(istio_requests_total{destination_namespace=\"gameforge\"}[5m])) * 100",
+                "legendFormat": "Success Rate %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "min": 0,
+                "max": 100,
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "yellow", "value": 95},
+                    {"color": "green", "value": 99}
+                  ]
+                }
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Response Time (P99)",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{destination_namespace=\"gameforge\"}[5m])) by (destination_service_name, le))",
+                "legendFormat": "{{destination_service_name}} P99"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Milliseconds",
+                "min": 0
+              }
+            ],
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "Circuit Breaker Status",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "envoy_cluster_upstream_cx_connect_fail{cluster_name=~\".*gameforge.*\"}",
+                "format": "table"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+          },
+          {
+            "id": 5,
+            "title": "mTLS Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sum(istio_requests_total{destination_namespace=\"gameforge\",connection_security_policy=\"mutual_tls\"}) / sum(istio_requests_total{destination_namespace=\"gameforge\"}) * 100",
+                "legendFormat": "mTLS Coverage %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "yellow", "value": 80},
+                    {"color": "green", "value": 95}
+                  ]
+                }
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "30s"
+      }
+    }
+
+---
+# ServiceMonitor for Istio Components
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: istio-mesh-monitoring
+  namespace: istio-system
+  labels:
+    monitoring: istio
+spec:
+  selector:
+    matchLabels:
+      app: istiod
+  endpoints:
+  - port: http-monitoring
+    interval: 30s
+    path: /stats/prometheus
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - istio-system
+
+---
+# Gateway ServiceMonitor
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: istio-gateway-monitoring
+  namespace: istio-system
+  labels:
+    monitoring: istio-gateway
+spec:
+  selector:
+    matchLabels:
+      app: istio-ingressgateway
+  endpoints:
+  - port: http-monitoring
+    interval: 30s
+    path: /stats/prometheus
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - istio-system
+
+---
+# GameForge Service Mesh Alerting Rules
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gameforge-mesh-alerts
+  namespace: monitoring
+  labels:
+    app: prometheus
+    role: alert-rules
+spec:
+  groups:
+  - name: gameforge.service.mesh
+    rules:
+    # High error rate alert
+    - alert: GameForgeHighErrorRate
+      expr: |
+        (
+          sum(rate(istio_requests_total{destination_namespace="gameforge",response_code=~"5.*"}[5m])) /
+          sum(rate(istio_requests_total{destination_namespace="gameforge"}[5m]))
+        ) * 100 > 5
+      for: 2m
+      labels:
+        severity: warning
+        component: service-mesh
+      annotations:
+        summary: "High error rate in GameForge service mesh"
+        description: "Error rate is {{ $value }}% for GameForge services"
+    
+    # High response time alert
+    - alert: GameForgeHighLatency
+      expr: |
+        histogram_quantile(0.99,
+          sum(rate(istio_request_duration_milliseconds_bucket{destination_namespace="gameforge"}[5m]))
+          by (destination_service_name, le)
+        ) > 2000
+      for: 5m
+      labels:
+        severity: warning
+        component: service-mesh
+      annotations:
+        summary: "High latency in GameForge service mesh"
+        description: "P99 latency is {{ $value }}ms for {{ $labels.destination_service_name }}"
+    
+    # Circuit breaker triggered
+    - alert: GameForgeCircuitBreakerOpen
+      expr: |
+        sum(envoy_cluster_upstream_cx_connect_fail{cluster_name=~".*gameforge.*"}) > 10
+      for: 1m
+      labels:
+        severity: critical
+        component: service-mesh
+      annotations:
+        summary: "Circuit breaker triggered for GameForge services"
+        description: "Circuit breaker has been triggered for {{ $labels.cluster_name }}"
+    
+    # mTLS not enforced
+    - alert: GameForgemTLSNotEnforced
+      expr: |
+        (
+          sum(istio_requests_total{destination_namespace="gameforge",connection_security_policy="mutual_tls"}) /
+          sum(istio_requests_total{destination_namespace="gameforge"})
+        ) * 100 < 95
+      for: 5m
+      labels:
+        severity: warning
+        component: security
+      annotations:
+        summary: "mTLS not fully enforced in GameForge mesh"
+        description: "Only {{ $value }}% of traffic is using mTLS"
+    
+    # Service mesh component down
+    - alert: IstioComponentDown
+      expr: |
+        up{job=~".*istio.*"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: service-mesh
+      annotations:
+        summary: "Istio component is down"
+        description: "{{ $labels.job }} is not responding"
+
+---
+# Network Policy for Kiali Access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kiali-access
+  namespace: istio-system
+spec:
+  podSelector:
+    matchLabels:
+      app: kiali
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow access from LoadBalancer
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 20001
+  # Allow access from Istio gateway
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    ports:
+    - protocol: TCP
+      port: 20001
+  egress:
+  # Allow access to Prometheus
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  # Allow access to Jaeger
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 16686
+  # Allow access to Kubernetes API
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443

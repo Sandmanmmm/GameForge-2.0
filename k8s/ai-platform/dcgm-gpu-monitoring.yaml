@@ -1,0 +1,598 @@
+# NVIDIA DCGM GPU Health Monitoring for GameForge AI Platform
+# Comprehensive GPU monitoring with Prometheus integration
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dcgm-exporter
+  namespace: monitoring
+  labels:
+    app: dcgm-exporter
+    component: gpu-monitoring
+    version: "3.1.8"
+spec:
+  selector:
+    matchLabels:
+      app: dcgm-exporter
+      component: gpu-monitoring
+  template:
+    metadata:
+      labels:
+        app: dcgm-exporter
+        component: gpu-monitoring
+        version: "3.1.8"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9400"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Deploy only on GPU nodes
+      nodeSelector:
+        accelerator: nvidia
+      
+      # High priority for monitoring
+      priorityClassName: system-node-critical
+      
+      # Service account
+      serviceAccountName: dcgm-exporter
+      
+      # Tolerations for GPU nodes
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "ai-workload"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+      
+      # Host network for GPU access
+      hostNetwork: true
+      hostPID: true
+      
+      containers:
+      - name: dcgm-exporter
+        image: nvcr.io/nvidia/k8s/dcgm-exporter:3.1.8-3.1.5-ubuntu20.04
+        imagePullPolicy: Always
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        
+        # Environment variables
+        env:
+        - name: DCGM_EXPORTER_LISTEN
+          value: ":9400"
+        - name: DCGM_EXPORTER_KUBERNETES
+          value: "true"
+        - name: DCGM_EXPORTER_COLLECTORS
+          value: "/etc/dcgm-exporter/dcp-metrics-included.csv"
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        
+        # Security context
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - SYS_ADMIN
+        
+        # Ports
+        ports:
+        - name: metrics
+          containerPort: 9400
+          hostPort: 9400
+          protocol: TCP
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: "/health"
+            port: 9400
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: "/health"
+            port: 9400
+          initialDelaySeconds: 15
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        # Volume mounts
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+        - name: dev
+          mountPath: /host/dev
+          readOnly: true
+        - name: nvidia-install-dir
+          mountPath: /usr/local/nvidia
+          readOnly: true
+        - name: dcgm-config
+          mountPath: /etc/dcgm-exporter
+          readOnly: true
+        - name: pod-gpu-resources
+          mountPath: /var/lib/kubelet/pod-resources
+          readOnly: true
+      
+      # Init container for DCGM configuration
+      initContainers:
+      - name: dcgm-init
+        image: nvcr.io/nvidia/k8s/dcgm-exporter:3.1.8-3.1.5-ubuntu20.04
+        command:
+        - sh
+        - -c
+        - |
+          echo "Initializing DCGM configuration..."
+          # Check NVIDIA driver installation
+          if [ -d "/usr/local/nvidia/lib64" ]; then
+            echo "NVIDIA drivers found"
+          else
+            echo "Warning: NVIDIA drivers not found in expected location"
+          fi
+          # Validate DCGM connectivity
+          nvidia-smi || echo "nvidia-smi not available in init"
+          echo "DCGM initialization completed"
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: nvidia-install-dir
+          mountPath: /usr/local/nvidia
+          readOnly: true
+        - name: dev
+          mountPath: /host/dev
+          readOnly: true
+      
+      # Volumes
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+          type: Directory
+      - name: sys
+        hostPath:
+          path: /sys
+          type: Directory
+      - name: dev
+        hostPath:
+          path: /dev
+          type: Directory
+      - name: nvidia-install-dir
+        hostPath:
+          path: /usr/local/nvidia
+          type: DirectoryOrCreate
+      - name: pod-gpu-resources
+        hostPath:
+          path: /var/lib/kubelet/pod-resources
+          type: Directory
+      - name: dcgm-config
+        configMap:
+          name: dcgm-exporter-config
+
+---
+# DCGM Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: dcgm-exporter
+  namespace: monitoring
+  labels:
+    app: dcgm-exporter
+    component: gpu-monitoring
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for DaemonSet
+  selector:
+    app: dcgm-exporter
+    component: gpu-monitoring
+  ports:
+  - name: metrics
+    port: 9400
+    targetPort: 9400
+    protocol: TCP
+
+---
+# DCGM ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dcgm-exporter
+  namespace: monitoring
+  labels:
+    app: dcgm-exporter
+    component: gpu-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: dcgm-exporter
+      component: gpu-monitoring
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scrapeTimeout: 25s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+
+---
+# DCGM Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dcgm-exporter-config
+  namespace: monitoring
+data:
+  dcp-metrics-included.csv: |
+    # DCGM Metrics Configuration for GameForge AI Platform
+    # Format: Metric name, Prometheus metric name, Help text
+    
+    # GPU Utilization Metrics
+    DCGM_FI_DEV_GPU_UTIL, dcgm_gpu_utilization, GPU utilization (in %).
+    DCGM_FI_DEV_MEM_COPY_UTIL, dcgm_gpu_mem_copy_utilization, GPU memory copy utilization (in %).
+    DCGM_FI_DEV_ENC_UTIL, dcgm_gpu_enc_utilization, GPU encoder utilization (in %).
+    DCGM_FI_DEV_DEC_UTIL, dcgm_gpu_dec_utilization, GPU decoder utilization (in %).
+    
+    # Memory Metrics
+    DCGM_FI_DEV_FB_FREE, dcgm_fb_free, Framebuffer memory free (in MiB).
+    DCGM_FI_DEV_FB_USED, dcgm_fb_used, Framebuffer memory used (in MiB).
+    DCGM_FI_DEV_FB_TOTAL, dcgm_fb_total, Total framebuffer memory (in MiB).
+    
+    # Temperature Metrics
+    DCGM_FI_DEV_GPU_TEMP, dcgm_gpu_temp, GPU temperature (in C).
+    DCGM_FI_DEV_MEMORY_TEMP, dcgm_memory_temp, Memory temperature (in C).
+    
+    # Power Metrics
+    DCGM_FI_DEV_POWER_USAGE, dcgm_power_usage, Power draw (in W).
+    DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, dcgm_total_energy_consumption, Total energy consumption since driver start (in mJ).
+    
+    # Clock Metrics
+    DCGM_FI_DEV_SM_CLOCK, dcgm_sm_clock, SM clock frequency (in MHz).
+    DCGM_FI_DEV_MEM_CLOCK, dcgm_mem_clock, Memory clock frequency (in MHz).
+    DCGM_FI_DEV_VIDEO_CLOCK, dcgm_video_clock, Video encoder/decoder clock frequency (in MHz).
+    
+    # Performance Metrics
+    DCGM_FI_DEV_PCIE_TX_THROUGHPUT, dcgm_pcie_tx_throughput, PCIe TX throughput (in KB/s).
+    DCGM_FI_DEV_PCIE_RX_THROUGHPUT, dcgm_pcie_rx_throughput, PCIe RX throughput (in KB/s).
+    DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, dcgm_nvlink_bandwidth_total, Total NVLink bandwidth (in KB/s).
+    
+    # Error Metrics
+    DCGM_FI_DEV_XID_ERRORS, dcgm_xid_errors, Number of XID errors.
+    DCGM_FI_DEV_POWER_VIOLATION, dcgm_power_violation, Throttling due to power constraints (in %).
+    DCGM_FI_DEV_THERMAL_VIOLATION, dcgm_thermal_violation, Throttling due to thermal constraints (in %).
+    DCGM_FI_DEV_SYNC_BOOST_VIOLATION, dcgm_sync_boost_violation, Throttling due to sync-boost constraints (in %).
+    DCGM_FI_DEV_BOARD_LIMIT_VIOLATION, dcgm_board_limit_violation, Throttling due to board limit constraints (in %).
+    DCGM_FI_DEV_LOW_UTIL_VIOLATION, dcgm_low_util_violation, Throttling due to low utilization (in %).
+    DCGM_FI_DEV_RELIABILITY_VIOLATION, dcgm_reliability_violation, Throttling due to reliability constraints (in %).
+    
+    # Process Metrics
+    DCGM_FI_DEV_GRAPHICS_PIDS, dcgm_graphics_pids, Number of graphics processes running on the GPU.
+    DCGM_FI_DEV_COMPUTE_PIDS, dcgm_compute_pids, Number of compute processes running on the GPU.
+    
+    # Virtualization Metrics
+    DCGM_FI_DEV_VGPU_LICENSE_STATUS, dcgm_vgpu_license_status, vGPU License status
+    DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, dcgm_uncorrectable_remapped_rows, Number of uncorrectable remapped rows.
+    DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS, dcgm_correctable_remapped_rows, Number of correctable remapped rows.
+    DCGM_FI_DEV_ROW_REMAP_FAILURE, dcgm_row_remap_failure, Whether remapping of rows has failed.
+
+---
+# DCGM Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dcgm-exporter
+  namespace: monitoring
+
+---
+# DCGM ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dcgm-exporter
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/proxy", "nodes/metrics", "pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+# DCGM ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dcgm-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dcgm-exporter
+subjects:
+- kind: ServiceAccount
+  name: dcgm-exporter
+  namespace: monitoring
+
+---
+# GPU Node Exporter for Additional Metrics
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gpu-node-exporter
+  namespace: monitoring
+  labels:
+    app: gpu-node-exporter
+    component: node-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: gpu-node-exporter
+      component: node-monitoring
+  template:
+    metadata:
+      labels:
+        app: gpu-node-exporter
+        component: node-monitoring
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Deploy only on GPU nodes
+      nodeSelector:
+        accelerator: nvidia
+      
+      # Tolerations
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "ai-workload"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      
+      # Host network access
+      hostNetwork: true
+      hostPID: true
+      
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:v1.6.1
+        imagePullPolicy: IfNotPresent
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        
+        # Command args for GPU-specific metrics
+        args:
+        - --path.procfs=/host/proc
+        - --path.sysfs=/host/sys
+        - --path.rootfs=/host/root
+        - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+        - --collector.systemd
+        - --collector.processes
+        - --collector.interrupts
+        - --web.listen-address=:9100
+        
+        # Security context
+        securityContext:
+          runAsUser: 65534
+          runAsGroup: 65534
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+        
+        # Ports
+        ports:
+        - name: metrics
+          containerPort: 9100
+          hostPort: 9100
+          protocol: TCP
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 9100
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 9100
+          initialDelaySeconds: 15
+          periodSeconds: 15
+        
+        # Volume mounts
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+        - name: root
+          mountPath: /host/root
+          readOnly: true
+      
+      # Volumes
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+          type: Directory
+      - name: sys
+        hostPath:
+          path: /sys
+          type: Directory
+      - name: root
+        hostPath:
+          path: /
+          type: Directory
+
+---
+# PrometheusRule for GPU Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gpu-monitoring-rules
+  namespace: monitoring
+  labels:
+    app: dcgm-exporter
+    component: gpu-alerts
+spec:
+  groups:
+  - name: gpu.rules
+    rules:
+    # GPU Utilization Alerts
+    - alert: GPUHighUtilization
+      expr: dcgm_gpu_utilization > 90
+      for: 5m
+      labels:
+        severity: warning
+        component: gpu
+      annotations:
+        summary: "High GPU utilization detected"
+        description: "GPU utilization on {{ $labels.node }} is {{ $value }}% for more than 5 minutes"
+    
+    - alert: GPUVeryHighUtilization
+      expr: dcgm_gpu_utilization > 95
+      for: 2m
+      labels:
+        severity: critical
+        component: gpu
+      annotations:
+        summary: "Very high GPU utilization detected"
+        description: "GPU utilization on {{ $labels.node }} is {{ $value }}% for more than 2 minutes"
+    
+    # GPU Memory Alerts
+    - alert: GPUHighMemoryUsage
+      expr: (dcgm_fb_used / dcgm_fb_total) * 100 > 85
+      for: 3m
+      labels:
+        severity: warning
+        component: gpu
+      annotations:
+        summary: "High GPU memory usage detected"
+        description: "GPU memory usage on {{ $labels.node }} is {{ $value }}% for more than 3 minutes"
+    
+    - alert: GPUVeryHighMemoryUsage
+      expr: (dcgm_fb_used / dcgm_fb_total) * 100 > 95
+      for: 1m
+      labels:
+        severity: critical
+        component: gpu
+      annotations:
+        summary: "Very high GPU memory usage detected"
+        description: "GPU memory usage on {{ $labels.node }} is {{ $value }}% for more than 1 minute"
+    
+    # GPU Temperature Alerts
+    - alert: GPUHighTemperature
+      expr: dcgm_gpu_temp > 80
+      for: 3m
+      labels:
+        severity: warning
+        component: gpu
+      annotations:
+        summary: "High GPU temperature detected"
+        description: "GPU temperature on {{ $labels.node }} is {{ $value }}°C for more than 3 minutes"
+    
+    - alert: GPUVeryHighTemperature
+      expr: dcgm_gpu_temp > 90
+      for: 1m
+      labels:
+        severity: critical
+        component: gpu
+      annotations:
+        summary: "Very high GPU temperature detected"
+        description: "GPU temperature on {{ $labels.node }} is {{ $value }}°C for more than 1 minute"
+    
+    # GPU Power Alerts
+    - alert: GPUHighPowerUsage
+      expr: dcgm_power_usage > 300
+      for: 5m
+      labels:
+        severity: warning
+        component: gpu
+      annotations:
+        summary: "High GPU power usage detected"
+        description: "GPU power usage on {{ $labels.node }} is {{ $value }}W for more than 5 minutes"
+    
+    # GPU Error Alerts
+    - alert: GPUXIDErrors
+      expr: increase(dcgm_xid_errors[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+        component: gpu
+      annotations:
+        summary: "GPU XID errors detected"
+        description: "GPU XID errors detected on {{ $labels.node }}: {{ $value }} errors in the last 5 minutes"
+    
+    # GPU Throttling Alerts
+    - alert: GPUThermalThrottling
+      expr: dcgm_thermal_violation > 0
+      for: 1m
+      labels:
+        severity: warning
+        component: gpu
+      annotations:
+        summary: "GPU thermal throttling detected"
+        description: "GPU thermal throttling on {{ $labels.node }}: {{ $value }}% for more than 1 minute"
+    
+    - alert: GPUPowerThrottling
+      expr: dcgm_power_violation > 0
+      for: 1m
+      labels:
+        severity: warning
+        component: gpu
+      annotations:
+        summary: "GPU power throttling detected"
+        description: "GPU power throttling on {{ $labels.node }}: {{ $value }}% for more than 1 minute"
+    
+    # GPU Availability Alerts
+    - alert: GPUNodeDown
+      expr: up{job="dcgm-exporter"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: gpu
+      annotations:
+        summary: "GPU node monitoring is down"
+        description: "DCGM exporter on {{ $labels.node }} has been down for more than 1 minute"
+    
+    # AI Workload Specific Alerts
+    - alert: AIWorkloadLowGPUUtilization
+      expr: dcgm_gpu_utilization < 10 and on(node) (count by (node) (kube_pod_info{pod=~".*torchserve.*|.*ray.*|.*jupyter.*"})) > 0
+      for: 10m
+      labels:
+        severity: info
+        component: ai-workload
+      annotations:
+        summary: "Low GPU utilization with AI workloads"
+        description: "Node {{ $labels.node }} has AI workloads but GPU utilization is only {{ $value }}% for more than 10 minutes"

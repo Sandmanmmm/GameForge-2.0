@@ -1,0 +1,633 @@
+# AI Workload Scheduler for GameForge Platform
+# Intelligent GPU scheduling with affinity, resource quotas, and priority management
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-scheduler
+  labels:
+    name: ai-scheduler
+    component: ai-workload-management
+
+---
+# AI Scheduler Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-workload-scheduler
+  namespace: ai-scheduler
+  labels:
+    app: ai-workload-scheduler
+    component: scheduler
+    version: "1.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-workload-scheduler
+      component: scheduler
+  template:
+    metadata:
+      labels:
+        app: ai-workload-scheduler
+        component: scheduler
+        version: "1.0.0"
+    spec:
+      # High priority for scheduler
+      priorityClassName: system-cluster-critical
+      
+      # Service account
+      serviceAccountName: ai-scheduler
+      
+      # Anti-affinity for high availability
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values: ["ai-workload-scheduler"]
+            topologyKey: kubernetes.io/hostname
+      
+      containers:
+      - name: scheduler
+        image: k8s.gcr.io/kube-scheduler:v1.28.0
+        imagePullPolicy: IfNotPresent
+        
+        # Resource allocation
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        
+        # Command with custom configuration
+        command:
+        - kube-scheduler
+        args:
+        - --config=/etc/kubernetes/scheduler-config.yaml
+        - --v=2
+        - --leader-elect=true
+        - --leader-elect-resource-name=ai-workload-scheduler
+        - --leader-elect-resource-namespace=ai-scheduler
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 10259
+            scheme: HTTPS
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 15
+          failureThreshold: 8
+        
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 10259
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 15
+          failureThreshold: 3
+        
+        # Volume mounts
+        volumeMounts:
+        - name: config
+          mountPath: /etc/kubernetes
+          readOnly: true
+        - name: ca-certs
+          mountPath: /etc/ssl/certs
+          readOnly: true
+        
+        # Security context
+        securityContext:
+          runAsUser: 10001
+          runAsGroup: 10001
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      
+      # Volumes
+      volumes:
+      - name: config
+        configMap:
+          name: ai-scheduler-config
+      - name: ca-certs
+        hostPath:
+          path: /etc/ssl/certs
+          type: DirectoryOrCreate
+      
+      # Security context
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      
+      # Node selector for control plane
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      
+      # Tolerations for control plane
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+
+---
+# AI Scheduler Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-scheduler-config
+  namespace: ai-scheduler
+data:
+  scheduler-config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1beta3
+    kind: KubeSchedulerConfiguration
+    profiles:
+    - schedulerName: ai-workload-scheduler
+      plugins:
+        # Scoring plugins for AI workloads
+        score:
+          enabled:
+          - name: NodeResourcesFit
+          - name: NodeAffinity
+          - name: PodTopologySpread
+          - name: InterPodAffinity
+          - name: ImageLocality
+          - name: TaintToleration
+          - name: NodePreferAvoidPods
+          disabled:
+          - name: NodeResourcesLeastAllocated
+        
+        # Filter plugins
+        filter:
+          enabled:
+          - name: NodeUnschedulable
+          - name: NodeName
+          - name: TaintToleration
+          - name: NodeAffinity
+          - name: NodePorts
+          - name: NodeResourcesFit
+          - name: VolumeRestrictions
+          - name: EBSLimits
+          - name: GCEPDLimits
+          - name: NodeVolumeLimits
+          - name: AzureDiskLimits
+          - name: VolumeBinding
+          - name: VolumeZone
+          - name: PodTopologySpread
+          - name: InterPodAffinity
+        
+        # Plugin configuration
+        pluginConfig:
+        - name: NodeResourcesFit
+          args:
+            scoringStrategy:
+              type: MostAllocated  # Prefer nodes with high utilization for GPU efficiency
+              resources:
+              - name: nvidia.com/gpu
+                weight: 100
+              - name: cpu
+                weight: 1
+              - name: memory
+                weight: 1
+        
+        - name: PodTopologySpread
+          args:
+            defaultConstraints:
+            - maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: DoNotSchedule
+            - maxSkew: 2
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+        
+        - name: InterPodAffinity
+          args:
+            hardPodAffinityWeight: 100
+    
+    # Leader election configuration
+    leaderElection:
+      leaderElect: true
+      leaseDuration: 15s
+      renewDeadline: 10s
+      retryPeriod: 2s
+      resourceLock: leases
+      resourceName: ai-workload-scheduler
+      resourceNamespace: ai-scheduler
+    
+    # Client connection configuration
+    clientConnection:
+      kubeconfig: ""
+      acceptContentTypes: ""
+      contentType: application/vnd.kubernetes.protobuf
+      qps: 50
+      burst: 100
+    
+    # Metrics and profiling
+    metricsBindAddress: 0.0.0.0:10251
+    healthzBindAddress: 0.0.0.0:10259
+    enableProfiling: true
+    enableContentionProfiling: true
+
+---
+# AI Scheduler Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-scheduler
+  namespace: ai-scheduler
+
+---
+# AI Scheduler ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ai-scheduler
+rules:
+# Core scheduler permissions
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["persistentvolumes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["replicationcontrollers"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+
+# Apps resources
+- apiGroups: ["apps"]
+  resources: ["replicasets", "deployments", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+
+# Storage resources
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses", "csinodes", "csidrivers", "csistoragecapacities"]
+  verbs: ["get", "list", "watch"]
+
+# Policy resources
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch"]
+
+# Coordination for leader election
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# Events
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch", "update"]
+
+# Node metrics
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+
+---
+# AI Scheduler ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ai-scheduler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ai-scheduler
+subjects:
+- kind: ServiceAccount
+  name: ai-scheduler
+  namespace: ai-scheduler
+
+---
+# Resource Quota for AI Workloads
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-workload-quota
+  namespace: gameforge
+spec:
+  hard:
+    # GPU limits
+    requests.nvidia.com/gpu: "20"
+    limits.nvidia.com/gpu: "20"
+    
+    # CPU limits for AI workloads
+    requests.cpu: "100"
+    limits.cpu: "200"
+    
+    # Memory limits
+    requests.memory: "500Gi"
+    limits.memory: "1000Gi"
+    
+    # Storage limits
+    requests.storage: "2Ti"
+    persistentvolumeclaims: "50"
+    
+    # Pod limits
+    pods: "200"
+    
+    # Service limits
+    services: "20"
+    services.loadbalancers: "5"
+
+---
+# Limit Range for AI Workloads
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ai-workload-limits
+  namespace: gameforge
+spec:
+  limits:
+  # Pod limits
+  - type: Pod
+    max:
+      cpu: "32"
+      memory: "128Gi"
+      nvidia.com/gpu: "8"
+    min:
+      cpu: "100m"
+      memory: "256Mi"
+  
+  # Container limits
+  - type: Container
+    default:
+      cpu: "2"
+      memory: "4Gi"
+    defaultRequest:
+      cpu: "500m"
+      memory: "1Gi"
+    max:
+      cpu: "16"
+      memory: "64Gi"
+      nvidia.com/gpu: "4"
+    min:
+      cpu: "100m"
+      memory: "256Mi"
+  
+  # PVC limits
+  - type: PersistentVolumeClaim
+    max:
+      storage: "1Ti"
+    min:
+      storage: "1Gi"
+
+---
+# Priority Classes for AI Workloads
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: critical-ai-training
+value: 2000
+globalDefault: false
+description: "Critical AI training workloads with highest priority"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority-training
+value: 1500
+globalDefault: false
+description: "High priority AI training workloads"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: medium-priority-inference
+value: 1000
+globalDefault: false
+description: "Medium priority AI inference workloads"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority-batch
+value: 500
+globalDefault: false
+description: "Low priority batch AI workloads"
+
+---
+# Network Policy for AI Workloads
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-workload-network-policy
+  namespace: gameforge
+spec:
+  podSelector:
+    matchLabels:
+      workload-type: ai
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from service mesh
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+  # Allow traffic from monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080  # TorchServe
+    - protocol: TCP
+      port: 8265  # Ray Dashboard
+    - protocol: TCP
+      port: 9400  # DCGM metrics
+  # Allow inter-pod communication within namespace
+  - from:
+    - podSelector: {}
+  egress:
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow HTTPS
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow inter-pod communication
+  - to:
+    - podSelector: {}
+  # Allow access to model storage
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: storage
+  # Allow access to service mesh
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+
+---
+# GPU Node Affinity Rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-affinity-rules
+  namespace: ai-scheduler
+data:
+  rules.yaml: |
+    # GPU Affinity Rules for AI Workload Scheduler
+    
+    training_workloads:
+      # High-memory GPU preference for training
+      node_affinity:
+        required:
+          - key: accelerator
+            operator: In
+            values: ["nvidia"]
+          - key: gpu-memory
+            operator: In
+            values: ["32gb", "40gb", "80gb"]
+        preferred:
+          - weight: 100
+            key: gpu-type
+            operator: In
+            values: ["a100", "v100", "h100"]
+          - weight: 80
+            key: nvlink
+            operator: In
+            values: ["true"]
+      
+      # Pod anti-affinity to spread training jobs
+      pod_anti_affinity:
+        preferred:
+          - weight: 100
+            topology_key: kubernetes.io/hostname
+            label_selector:
+              workload-type: training
+    
+    inference_workloads:
+      # Any GPU for inference with preference for newer
+      node_affinity:
+        required:
+          - key: accelerator
+            operator: In
+            values: ["nvidia"]
+        preferred:
+          - weight: 90
+            key: gpu-type
+            operator: In
+            values: ["rtx4090", "rtx3090", "a100"]
+          - weight: 70
+            key: gpu-memory
+            operator: In
+            values: ["16gb", "24gb", "32gb"]
+      
+      # Pod affinity to co-locate inference workloads
+      pod_affinity:
+        preferred:
+          - weight: 50
+            topology_key: kubernetes.io/hostname
+            label_selector:
+              workload-type: inference
+    
+    batch_workloads:
+      # Lower-end GPUs acceptable for batch
+      node_affinity:
+        required:
+          - key: accelerator
+            operator: In
+            values: ["nvidia"]
+        preferred:
+          - weight: 60
+            key: gpu-type
+            operator: In
+            values: ["gtx1080", "rtx2080", "rtx3070"]
+      
+      # Flexible placement
+      pod_anti_affinity:
+        preferred:
+          - weight: 30
+            topology_key: kubernetes.io/hostname
+            label_selector:
+              workload-type: batch
+
+---
+# AI Scheduler Service for Metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-scheduler-metrics
+  namespace: ai-scheduler
+  labels:
+    app: ai-workload-scheduler
+    component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    app: ai-workload-scheduler
+    component: scheduler
+  ports:
+  - name: metrics
+    port: 10251
+    targetPort: 10251
+    protocol: TCP
+  - name: healthz
+    port: 10259
+    targetPort: 10259
+    protocol: TCP
+
+---
+# ServiceMonitor for AI Scheduler
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-scheduler-metrics
+  namespace: ai-scheduler
+  labels:
+    app: ai-workload-scheduler
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: ai-workload-scheduler
+      component: metrics
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scrapeTimeout: 25s

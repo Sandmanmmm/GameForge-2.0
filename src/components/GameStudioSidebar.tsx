@@ -304,27 +304,7 @@ export function GameStudioSidebar({
                 </div>
               </div>
 
-              {/* Recent Activity */}
-              <div className="space-y-3 mt-6">
-                <h4 className="text-sm font-medium text-muted-foreground px-2">Recent Activity</h4>
-                <div className="space-y-2">
-                  {[
-                    { action: 'Created new project', time: '2h ago', color: 'text-accent' },
-                    { action: 'Updated story outline', time: '4h ago', color: 'text-emerald-400' },
-                    { action: 'Added art assets', time: '1d ago', color: 'text-blue-400' }
-                  ].map((activity, i) => (
-                    <div key={i} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted/20 transition-colors">
-                      <div className={cn('w-2 h-2 rounded-full', activity.color.replace('text-', 'bg-'))} />
-                      <div className="flex-1 text-xs text-muted-foreground truncate">
-                        {activity.action}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {activity.time}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {/* Recent Activity removed to make space for account management icons */}
             </motion.div>
           )}
         </AnimatePresence>

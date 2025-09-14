@@ -1,0 +1,60 @@
+# Configuration file for CI/CD deployment environments
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: deployment-config
+  namespace: gameforge
+data:
+  staging.env: |
+    ENVIRONMENT=staging
+    LOG_LEVEL=debug
+    HEALTH_CHECK_INTERVAL=30s
+    READINESS_TIMEOUT=60s
+    DATABASE_URL=postgresql://gameforge:${DB_PASSWORD}@postgres-staging:5432/gameforge
+    REDIS_URL=redis://redis-staging:6379
+    MONITORING_ENABLED=true
+    TRACING_ENABLED=true
+    JAEGER_ENDPOINT=http://jaeger-collector:14268/api/traces
+    PROMETHEUS_METRICS_PORT=8080
+    
+  production.env: |
+    ENVIRONMENT=production
+    LOG_LEVEL=info
+    HEALTH_CHECK_INTERVAL=15s
+    READINESS_TIMEOUT=30s
+    DATABASE_URL=postgresql://gameforge:${DB_PASSWORD}@postgres:5432/gameforge
+    REDIS_URL=redis://redis:6379
+    MONITORING_ENABLED=true
+    TRACING_ENABLED=true
+    JAEGER_ENDPOINT=http://jaeger-collector:14268/api/traces
+    PROMETHEUS_METRICS_PORT=8080
+    
+  blue-green.config: |
+    # Blue/Green deployment configuration
+    traffic_switch_delay: 30
+    health_check_retries: 5
+    health_check_interval: 10
+    rollback_threshold: 3
+    canary_percentage: 10
+    full_deployment_delay: 300
+    
+  monitoring.alerts: |
+    # Alert configuration for deployments
+    deployment_failure_threshold: 1
+    response_time_threshold: 2000ms
+    error_rate_threshold: 5%
+    memory_usage_threshold: 80%
+    cpu_usage_threshold: 70%
+    
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: deployment-secrets
+  namespace: gameforge
+type: Opaque
+stringData:
+  slack-webhook-url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+  database-password: "your-secure-database-password"
+  jwt-secret: "your-jwt-secret-key"
+  api-key: "your-api-key"

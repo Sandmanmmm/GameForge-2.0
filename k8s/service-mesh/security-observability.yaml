@@ -1,0 +1,418 @@
+# Istio Security Configuration for GameForge
+# Enterprise-grade security: mTLS, RBAC, authorization policies
+
+# Peer Authentication - Enable mTLS for entire mesh
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: gameforge-mesh-policy
+  namespace: istio-system
+spec:
+  # Apply to entire mesh
+  mtls:
+    mode: STRICT  # Enforce mTLS for all communication
+
+---
+# Namespace-specific Peer Authentication
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: gameforge-namespace-policy
+  namespace: gameforge
+spec:
+  # Apply to all workloads in gameforge namespace
+  mtls:
+    mode: STRICT
+  
+  # Port-specific overrides
+  portLevelMtls:
+    8000:  # GameForge API port
+      mode: STRICT
+    6379:  # Redis port
+      mode: STRICT
+    5432:  # PostgreSQL port
+      mode: STRICT
+
+---
+# Request Authentication for JWT validation
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: gameforge-jwt-auth
+  namespace: gameforge
+spec:
+  selector:
+    matchLabels:
+      app: gameforge-api
+  jwtRules:
+  - issuer: "https://auth.gameforge.local"
+    jwksUri: "https://auth.gameforge.local/.well-known/jwks.json"
+    audiences:
+    - "gameforge-api"
+    - "gameforge-web"
+    forwardOriginalToken: true
+    outputClaimToHeaders:
+    - header: "x-user-id"
+      claim: "sub"
+    - header: "x-user-roles"
+      claim: "roles"
+    - header: "x-user-email"
+      claim: "email"
+
+---
+# Authorization Policy - API Access Control
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: gameforge-api-authz
+  namespace: gameforge
+spec:
+  selector:
+    matchLabels:
+      app: gameforge-api
+  
+  # Allow health checks without authentication
+  rules:
+  - to:
+    - operation:
+        paths: ["/health", "/ready", "/metrics"]
+    when:
+    - key: source.ip
+      values: ["0.0.0.0/0"]  # Allow from anywhere
+  
+  # Allow internal mesh communication
+  - from:
+    - source:
+        principals: ["cluster.local/ns/gameforge/sa/gameforge-api"]
+        namespaces: ["gameforge", "istio-system"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+  
+  # API v1 access requires valid JWT
+  - from:
+    - source:
+        requestPrincipals: ["https://auth.gameforge.local/*"]
+    to:
+    - operation:
+        paths: ["/api/v1/*"]
+        methods: ["GET", "POST", "PUT", "DELETE"]
+    when:
+    - key: request.headers[x-user-roles]
+      values: ["user", "admin", "developer"]
+  
+  # Admin endpoints require admin role
+  - from:
+    - source:
+        requestPrincipals: ["https://auth.gameforge.local/*"]
+    to:
+    - operation:
+        paths: ["/admin/*"]
+        methods: ["GET", "POST", "PUT", "DELETE"]
+    when:
+    - key: request.headers[x-user-roles]
+      values: ["admin"]
+  
+  # WebSocket connections require authentication
+  - from:
+    - source:
+        requestPrincipals: ["https://auth.gameforge.local/*"]
+    to:
+    - operation:
+        paths: ["/ws/*"]
+    when:
+    - key: request.headers[upgrade]
+      values: ["websocket"]
+
+---
+# Authorization Policy - Database Access Control
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: postgres-authz
+  namespace: gameforge
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  
+  # Only allow access from GameForge API
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/gameforge/sa/gameforge-api"]
+    to:
+    - operation:
+        ports: ["5432"]
+
+---
+# Authorization Policy - Cache Access Control
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: redis-authz
+  namespace: gameforge
+spec:
+  selector:
+    matchLabels:
+      app: redis
+  
+  # Only allow access from GameForge API and monitoring
+  rules:
+  - from:
+    - source:
+        principals: 
+        - "cluster.local/ns/gameforge/sa/gameforge-api"
+        - "cluster.local/ns/monitoring/sa/prometheus"
+    to:
+    - operation:
+        ports: ["6379"]
+
+---
+# Security Policy - Network Security
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: gameforge-network-security
+  namespace: gameforge
+spec:
+  # Apply to all workloads
+  
+  # Deny all by default, then allow specific traffic
+  action: DENY
+  rules:
+  - from:
+    - source:
+        notNamespaces: ["gameforge", "istio-system", "monitoring"]
+
+---
+# Allow specific network access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: gameforge-network-allow
+  namespace: gameforge
+spec:
+  action: ALLOW
+  rules:
+  # Allow traffic within gameforge namespace
+  - from:
+    - source:
+        namespaces: ["gameforge"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]
+  
+  # Allow monitoring access
+  - from:
+    - source:
+        namespaces: ["monitoring", "istio-system"]
+    to:
+    - operation:
+        paths: ["/metrics", "/health", "/ready"]
+        methods: ["GET"]
+  
+  # Allow ingress gateway access
+  - from:
+    - source:
+        principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]
+
+---
+# Telemetry Configuration for Observability
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: gameforge-observability
+  namespace: gameforge
+spec:
+  # Apply to all workloads in namespace
+  
+  # Metrics configuration
+  metrics:
+  - providers:
+    - name: prometheus
+  - overrides:
+    - match:
+        metric: ALL_METRICS
+      tagOverrides:
+        request_protocol:
+          value: "%{REQUEST_PROTOCOL}"
+        response_code:
+          value: "%{RESPONSE_CODE}"
+        source_app:
+          value: "%{SOURCE_APP}"
+        destination_service_name:
+          value: "%{DESTINATION_SERVICE_NAME}"
+        user_id:
+          value: "%{REQUEST_HEADERS['x-user-id']}"
+  
+  # Distributed tracing (integrates with existing Jaeger)
+  tracing:
+  - providers:
+    - name: jaeger
+  - customTags:
+      user_id:
+        header:
+          name: x-user-id
+      user_roles:
+        header:
+          name: x-user-roles
+      request_id:
+        header:
+          name: x-request-id
+      session_id:
+        header:
+          name: x-session-id
+  
+  # Access logging
+  accessLogging:
+  - providers:
+    - name: otel
+  - format:
+      labels:
+        source_app: "%{SOURCE_APP}"
+        destination_app: "%{DESTINATION_APP}"
+        method: "%{REQUEST_METHOD}"
+        url: "%{REQUEST_URL}"
+        protocol: "%{REQUEST_PROTOCOL}"
+        response_code: "%{RESPONSE_CODE}"
+        user_id: "%{REQUEST_HEADERS['x-user-id']}"
+        session_id: "%{REQUEST_HEADERS['x-session-id']}"
+        request_duration: "%{DURATION}"
+        bytes_sent: "%{BYTES_SENT}"
+        bytes_received: "%{BYTES_RECEIVED}"
+
+---
+# Workload-specific Telemetry for GameForge API
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: gameforge-api-telemetry
+  namespace: gameforge
+spec:
+  selector:
+    matchLabels:
+      app: gameforge-api
+  
+  # Enhanced metrics for API service
+  metrics:
+  - providers:
+    - name: prometheus
+  - overrides:
+    - match:
+        metric: requests_total
+      tagOverrides:
+        api_version:
+          value: "%{REQUEST_HEADERS['x-gameforge-version']}"
+        endpoint:
+          value: "%{REQUEST_URL_PATH}"
+        canary_version:
+          value: "%{REQUEST_HEADERS['x-canary-version']}"
+    - match:
+        metric: request_duration_milliseconds
+      tagOverrides:
+        endpoint_category:
+          value: |
+            has(request.url_path) && request.url_path | startsWith("/api/v1/games") ? "games" :
+            has(request.url_path) && request.url_path | startsWith("/api/v1/users") ? "users" :
+            has(request.url_path) && request.url_path | startsWith("/admin") ? "admin" :
+            "other"
+
+---
+# Service Monitor for Prometheus Integration
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: gameforge-mesh-monitoring
+  namespace: gameforge
+  labels:
+    app: gameforge
+    monitoring: istio
+spec:
+  selector:
+    matchLabels:
+      app: gameforge-api
+  endpoints:
+  - port: http-monitoring
+    interval: 30s
+    path: /stats/prometheus
+    scheme: http
+  - port: http-monitoring
+    interval: 30s
+    path: /metrics
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - gameforge
+
+---
+# Security Audit Configuration
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: gameforge-audit-logging
+  namespace: gameforge
+spec:
+  # Log all denied requests for security auditing
+  action: AUDIT
+  rules:
+  - to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+  when:
+  - key: source.ip
+    notValues: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+---
+# TLS Configuration for External Communication
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: gameforge-external-tls
+  namespace: gameforge
+spec:
+  host: "*.external.com"
+  trafficPolicy:
+    tls:
+      mode: SIMPLE  # Use TLS for external services
+      caCertificates: /etc/ssl/certs/ca-certificates.crt
+      sni: "*.external.com"
+
+---
+# Workload Entry for External Services
+apiVersion: networking.istio.io/v1beta1
+kind: WorkloadEntry
+metadata:
+  name: external-auth-service
+  namespace: gameforge
+spec:
+  address: "auth.gameforge.local"
+  ports:
+    https: 443
+  labels:
+    app: external-auth
+    type: external-service
+
+---
+# Service Entry for External Dependencies
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: gameforge-external-services
+  namespace: gameforge
+spec:
+  hosts:
+  - "auth.gameforge.local"
+  - "api.external-service.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 80
+    name: http
+    protocol: HTTP
+  location: MESH_EXTERNAL
+  resolution: DNS

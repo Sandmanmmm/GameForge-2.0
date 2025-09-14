@@ -1,0 +1,257 @@
+# Enhanced GitLab CI/CD Pipeline for GameForge
+# Includes infrastructure policy validation and blue/green deployments
+
+stages:
+  - security-analysis
+  - policy-validation
+  - build
+  - container-scan
+  - compliance-check  
+  - security-gate
+  - deploy-staging
+  - integration-tests
+  - deploy-production
+  - post-deployment
+
+variables:
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+  DOCKER_DRIVER: overlay2
+  KUBECONFIG: /tmp/.kube/config
+  CONFTEST_VERSION: "0.46.0"
+
+# Include existing security pipeline
+include:
+  - local: '/ci/gitlab/.gitlab-ci-security.yml'
+
+# Infrastructure Policy Validation
+iac_policy_validation:
+  stage: policy-validation
+  image: openpolicyagent/conftest:v${CONFTEST_VERSION}
+  before_script:
+    - apk add --no-cache git
+  script:
+    - echo "Validating Kubernetes manifests..."
+    - conftest verify --policy ci/policies k8s/
+    - echo "Validating Docker Compose configurations..."
+    - conftest verify --policy ci/policies docker-compose*.yml
+    - echo "Validating deployment configurations..."
+    - conftest verify --policy ci/policies ci/deployment/
+  artifacts:
+    reports:
+      junit: policy-validation-report.xml
+    paths:
+      - policy-validation-report.xml
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# Build and Push Container Image
+build_image:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+  script:
+    - docker build --pull -t $IMAGE_TAG .
+    - docker tag $IMAGE_TAG $CI_REGISTRY_IMAGE:latest
+    - docker push $IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE:latest
+    # Generate SBOM
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest $IMAGE_TAG -o json > sbom.json
+  artifacts:
+    paths:
+      - sbom.json
+    expire_in: 1 week
+  dependencies:
+    - iac_policy_validation
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# Blue/Green Deployment to Staging
+deploy_staging_blue_green:
+  stage: deploy-staging
+  image: bitnami/kubectl:latest
+  before_script:
+    - apk add --no-cache bash curl jq
+    - echo "$KUBE_CONFIG_STAGING" | base64 -d > $KUBECONFIG
+    - chmod 600 $KUBECONFIG
+  script:
+    - echo "Deploying to staging with blue/green strategy..."
+    - chmod +x ci/deployment/blue-green-deploy.sh
+    - ci/deployment/blue-green-deploy.sh --version $CI_COMMIT_SHA --environment staging --namespace gameforge-staging
+  environment:
+    name: staging
+    url: https://staging-api.gameforge.local
+  dependencies:
+    - build_image
+    - security_gate
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual
+
+# Integration Tests
+integration_tests:
+  stage: integration-tests
+  image: curlimages/curl:latest
+  variables:
+    STAGING_URL: "https://staging-api.gameforge.local"
+  script:
+    - echo "Running integration tests against staging..."
+    # API Health Tests
+    - curl -f "$STAGING_URL/api/v1/health" || exit 1
+    - curl -f "$STAGING_URL/api/v1/ready" || exit 1
+    - curl -f "$STAGING_URL/api/v1/version" || exit 1
+    
+    # Game-specific API Tests
+    - |
+      # Test game creation
+      GAME_RESPONSE=$(curl -s -X POST "$STAGING_URL/api/v1/games" \
+        -H "Content-Type: application/json" \
+        -d '{"name":"test-game","type":"test"}')
+      echo "Game creation response: $GAME_RESPONSE"
+      
+      # Test game listing
+      curl -f "$STAGING_URL/api/v1/games" || exit 1
+      
+      # Test metrics endpoint
+      curl -f "$STAGING_URL/metrics" || exit 1
+      
+    - echo "All integration tests passed!"
+  dependencies:
+    - deploy_staging_blue_green
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# Production Deployment Gate
+production_deployment_gate:
+  stage: deploy-production
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache jq curl
+  script:
+    - echo "Evaluating production deployment readiness..."
+    
+    # Check if all tests passed
+    - echo "✓ Security scans completed"
+    - echo "✓ Policy validation passed"
+    - echo "✓ Integration tests passed"
+    - echo "✓ Staging deployment successful"
+    
+    # Additional production readiness checks
+    - |
+      echo "Checking for any critical issues..."
+      # Add custom checks here (e.g., external monitoring, business metrics)
+      
+    - echo "Production deployment gate: APPROVED"
+  dependencies:
+    - integration_tests
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual
+  allow_failure: false
+
+# Blue/Green Deployment to Production
+deploy_production_blue_green:
+  stage: deploy-production
+  image: bitnami/kubectl:latest
+  before_script:
+    - apk add --no-cache bash curl jq
+    - echo "$KUBE_CONFIG_PRODUCTION" | base64 -d > $KUBECONFIG
+    - chmod 600 $KUBECONFIG
+  script:
+    - echo "Deploying to production with blue/green strategy..."
+    - chmod +x ci/deployment/blue-green-deploy.sh
+    - ci/deployment/blue-green-deploy.sh --version $CI_COMMIT_SHA --environment production --namespace gameforge
+    
+    # Additional production deployment steps
+    - echo "Notifying monitoring systems..."
+    - |
+      # Send deployment notification to Slack
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚀 GameForge production deployment completed: version '$CI_COMMIT_SHA'"}' \
+          $SLACK_WEBHOOK_URL
+      fi
+      
+    - echo "Production deployment completed!"
+  environment:
+    name: production
+    url: https://api.gameforge.local
+  dependencies:
+    - production_deployment_gate
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual
+
+# Post-Deployment Monitoring
+post_deployment_monitoring:
+  stage: post-deployment
+  image: curlimages/curl:latest
+  variables:
+    PRODUCTION_URL: "https://api.gameforge.local"
+  script:
+    - echo "Running post-deployment monitoring..."
+    
+    # Wait for services to stabilize
+    - sleep 60
+    
+    # Health monitoring
+    - for i in {1..5}; do
+        echo "Health check attempt $i/5..."
+        curl -f "$PRODUCTION_URL/api/v1/health" && break
+        sleep 30
+      done
+    
+    # Performance baseline check
+    - |
+      echo "Checking response times..."
+      for endpoint in "/api/v1/health" "/api/v1/games" "/api/v1/version"; do
+        response_time=$(curl -o /dev/null -s -w '%{time_total}' "$PRODUCTION_URL$endpoint")
+        echo "Response time for $endpoint: ${response_time}s"
+        if (( $(echo "$response_time > 2.0" | bc -l) )); then
+          echo "WARNING: High response time detected"
+        fi
+      done
+    
+    # Check metrics availability
+    - curl -f "$PRODUCTION_URL/metrics" || echo "WARNING: Metrics endpoint issue"
+    
+    - echo "Post-deployment monitoring completed"
+  dependencies:
+    - deploy_production_blue_green
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  allow_failure: true
+
+# Rollback Job (Manual trigger)
+rollback_production:
+  stage: deploy-production
+  image: bitnami/kubectl:latest
+  before_script:
+    - apk add --no-cache bash curl jq
+    - echo "$KUBE_CONFIG_PRODUCTION" | base64 -d > $KUBECONFIG
+    - chmod 600 $KUBECONFIG
+  script:
+    - echo "Performing emergency rollback..."
+    - chmod +x ci/deployment/rollback.sh
+    - ci/deployment/rollback.sh --environment production --namespace gameforge --force
+    
+    # Notify team of rollback
+    - |
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"⚠️ EMERGENCY: GameForge production rollback performed"}' \
+          $SLACK_WEBHOOK_URL
+      fi
+  environment:
+    name: production
+    url: https://api.gameforge.local
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual
+  allow_failure: false

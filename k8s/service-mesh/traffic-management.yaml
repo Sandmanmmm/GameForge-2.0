@@ -1,0 +1,412 @@
+# Advanced Traffic Management for GameForge
+# Enterprise-grade scalability features: canary deployments, circuit breakers, rate limiting
+
+# Canary Deployment Configuration
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: gameforge-canary-vs
+  namespace: gameforge
+  annotations:
+    description: "Canary deployment with sophisticated traffic splitting"
+spec:
+  hosts:
+  - "canary.gameforge.local"
+  - "gameforge-api-service.gameforge.svc.cluster.local"
+  gateways:
+  - gameforge-gateway
+  - mesh
+  
+  http:
+  # Canary traffic splitting based on headers
+  - match:
+    - headers:
+        x-canary-user:
+          exact: "true"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        subset: canary
+      weight: 100
+    headers:
+      response:
+        add:
+          x-canary-version: "true"
+  
+  # Geographic-based canary (EU users get canary)
+  - match:
+    - headers:
+        x-user-region:
+          exact: "eu-west-1"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        subset: canary
+      weight: 50  # 50% of EU traffic to canary
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        subset: stable
+      weight: 50
+  
+  # User-agent based canary (mobile apps get canary)
+  - match:
+    - headers:
+        user-agent:
+          regex: ".*GameForge-Mobile.*"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        subset: canary
+      weight: 30  # 30% of mobile traffic to canary
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        subset: stable
+      weight: 70
+  
+  # Default traffic splitting (gradual rollout)
+  - route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        subset: stable
+      weight: 95  # 95% stable traffic
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        subset: canary
+      weight: 5   # 5% canary traffic
+
+---
+# Rate Limiting for API Protection
+apiVersion: networking.istio.io/v1beta1
+kind: EnvoyFilter
+metadata:
+  name: gameforge-rate-limit
+  namespace: gameforge
+spec:
+  workloadSelector:
+    labels:
+      app: gameforge-api
+  configPatches:
+  # HTTP filter for rate limiting
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.local_ratelimit
+        typed_config:
+          "@type": type.googleapis.com/udpa.type.v1.TypedStruct
+          type_url: type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+          value:
+            stat_prefix: gameforge_rate_limiter
+            token_bucket:
+              max_tokens: 1000
+              tokens_per_fill: 100
+              fill_interval: 1s
+            filter_enabled:
+              runtime_key: local_rate_limit_enabled
+              default_value:
+                numerator: 100
+                denominator: HUNDRED
+            filter_enforced:
+              runtime_key: local_rate_limit_enforced
+              default_value:
+                numerator: 100
+                denominator: HUNDRED
+            response_headers_to_add:
+            - append: false
+              header:
+                key: x-local-rate-limit
+                value: 'true'
+            local_rate_limit_per_downstream_connection: false
+
+---
+# Global Rate Limiting with Redis Backend
+apiVersion: networking.istio.io/v1beta1
+kind: EnvoyFilter
+metadata:
+  name: gameforge-global-rate-limit
+  namespace: gameforge
+spec:
+  workloadSelector:
+    labels:
+      app: gameforge-api
+  configPatches:
+  # Rate limit service configuration
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.ratelimit
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ratelimit.v3.RateLimit
+          domain: gameforge-api
+          failure_mode_deny: false
+          timeout: 0.25s
+          rate_limit_service:
+            grpc_service:
+              envoy_grpc:
+                cluster_name: rate_limit_service
+            transport_api_version: V3
+          request_type: both
+          stage: 0
+
+---
+# Circuit Breaker Policy
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: gameforge-circuit-breaker
+  namespace: gameforge
+spec:
+  host: gameforge-api-service.gameforge.svc.cluster.local
+  trafficPolicy:
+    # Enhanced circuit breaker configuration
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+      splitExternalLocalOriginErrors: true
+    
+    # Connection pooling for performance
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        tcpNoDelay: true
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        idleTimeout: 60s
+        h2UpgradePolicy: UPGRADE
+        useClientProtocol: true
+    
+    # Port-specific policies
+    portLevelSettings:
+    - port:
+        number: 8000
+      connectionPool:
+        tcp:
+          maxConnections: 50
+        http:
+          http1MaxPendingRequests: 25
+          maxRequestsPerConnection: 5
+      outlierDetection:
+        consecutiveGatewayErrors: 3
+        consecutive5xxErrors: 3
+
+---
+# Retry Policy Configuration
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: gameforge-retry-policy
+  namespace: gameforge
+spec:
+  hosts:
+  - gameforge-api-service.gameforge.svc.cluster.local
+  http:
+  # Critical API endpoints with aggressive retries
+  - match:
+    - uri:
+        prefix: "/api/v1/games"
+    - uri:
+        prefix: "/api/v1/users"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+    retries:
+      attempts: 5
+      perTryTimeout: 5s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+      retryRemoteLocalities: true
+    timeout: 30s
+  
+  # File upload endpoints with longer timeouts
+  - match:
+    - uri:
+        prefix: "/api/v1/upload"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+    retries:
+      attempts: 2
+      perTryTimeout: 60s
+      retryOn: 5xx,reset,connect-failure
+    timeout: 300s  # 5 minutes for uploads
+  
+  # Real-time endpoints (minimal retries)
+  - match:
+    - uri:
+        prefix: "/api/v1/realtime"
+    - uri:
+        prefix: "/ws"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+    retries:
+      attempts: 1
+      perTryTimeout: 2s
+      retryOn: connect-failure
+    timeout: 120s
+
+---
+# Load Balancing Strategy Configuration
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: gameforge-load-balancing
+  namespace: gameforge
+spec:
+  host: "*.gameforge.svc.cluster.local"
+  trafficPolicy:
+    # Consistent hash load balancing for session affinity
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: "x-session-id"
+        minimumRingSize: 1024
+  
+  # Service-specific overrides
+  subsets:
+  - name: gameforge-api
+    labels:
+      app: gameforge-api
+    trafficPolicy:
+      loadBalancer:
+        simple: LEAST_CONN  # Best for stateful connections
+  
+  - name: redis
+    labels:
+      app: redis
+    trafficPolicy:
+      loadBalancer:
+        simple: ROUND_ROBIN  # Simple for cache access
+  
+  - name: postgres
+    labels:
+      app: postgres
+    trafficPolicy:
+      loadBalancer:
+        simple: LEAST_CONN  # Database connection pooling
+
+---
+# Fault Injection for Chaos Engineering
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: gameforge-chaos-testing
+  namespace: gameforge
+  annotations:
+    chaos.alpha.kubernetes.io/enabled: "false"  # Disabled by default
+spec:
+  hosts:
+  - gameforge-api-service.gameforge.svc.cluster.local
+  http:
+  # Inject faults only for specific test traffic
+  - match:
+    - headers:
+        x-chaos-testing:
+          exact: "true"
+    fault:
+      delay:
+        percentage:
+          value: 10.0  # 10% of test requests
+        fixedDelay: 5s
+      abort:
+        percentage:
+          value: 5.0   # 5% of test requests
+        httpStatus: 503
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+  
+  # Normal traffic without faults
+  - route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+
+---
+# Traffic Mirroring for Testing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: gameforge-traffic-mirror
+  namespace: gameforge
+spec:
+  hosts:
+  - gameforge-api-service.gameforge.svc.cluster.local
+  http:
+  - match:
+    - headers:
+        x-mirror-traffic:
+          exact: "true"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+        subset: stable
+    mirror:
+      host: gameforge-api-service.gameforge.svc.cluster.local
+      subset: canary
+    mirrorPercentage:
+      value: 100.0  # Mirror 100% of marked traffic
+
+---
+# Timeout Configuration
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: gameforge-timeouts
+  namespace: gameforge
+spec:
+  hosts:
+  - gameforge-api-service.gameforge.svc.cluster.local
+  http:
+  # Quick health checks
+  - match:
+    - uri:
+        prefix: "/health"
+    - uri:
+        prefix: "/ready"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+    timeout: 5s
+  
+  # API operations
+  - match:
+    - uri:
+        prefix: "/api/v1"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+    timeout: 30s
+  
+  # Admin operations (longer timeout)
+  - match:
+    - uri:
+        prefix: "/admin"
+    route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+    timeout: 120s
+  
+  # Default timeout
+  - route:
+    - destination:
+        host: gameforge-api-service.gameforge.svc.cluster.local
+    timeout: 60s

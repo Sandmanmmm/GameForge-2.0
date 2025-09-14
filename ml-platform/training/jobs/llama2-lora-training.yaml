@@ -1,0 +1,192 @@
+# GameForge Training Job Manifest
+# Defines training configuration for reproducible model training
+
+job_id: "llama2-7b-gameforge-lora-v1"
+name: "LLaMA 2 7B GameForge LoRA Fine-tuning"
+version: "1.0.0"
+created_at: "2025-09-13T10:00:00Z"
+created_by: "ml-team@gameforge.dev"
+
+# === TRAINING ENVIRONMENT ===
+environment:
+  platform: "vast.ai"  # Options: vast.ai, local, kubernetes
+  instance_type: "RTX4090x4"
+  gpu_memory: "24GB"
+  system_ram: "128GB"
+  storage: "2TB NVMe"
+  docker_image: "gameforge/training:llama2-v1.0"
+  
+# === DATASET CONFIGURATION ===
+dataset:
+  primary: "gameforge-rpg-content-v1"
+  validation_split: 0.1
+  test_split: 0.1
+  preprocessing_scripts:
+    - "services/inference/preprocessing/rpg_content_tokenizer.py"
+    - "services/inference/preprocessing/content_filter.py"
+  data_validation:
+    check_manifest_consistency: true
+    verify_shard_integrity: true
+    validate_licenses: true
+
+# === MODEL CONFIGURATION ===
+model:
+  base_model: "meta-llama/Llama-2-7b-hf"
+  base_model_source: "huggingface"
+  architecture: "LlamaForCausalLM"
+  context_length: 4096
+  
+# === TRAINING PARAMETERS ===
+training:
+  method: "lora"
+  learning_rate: 0.0002
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  effective_batch_size: 64  # batch_size * gradient_accumulation_steps
+  max_steps: 10000
+  warmup_steps: 500
+  save_steps: 1000
+  eval_steps: 500
+  logging_steps: 100
+  
+  # LoRA specific parameters
+  lora_config:
+    rank: 16
+    alpha: 32
+    dropout: 0.1
+    target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+    bias: "none"
+    task_type: "CAUSAL_LM"
+  
+  # Optimization
+  optimizer: "adamw"
+  weight_decay: 0.01
+  lr_scheduler: "cosine"
+  max_grad_norm: 1.0
+  
+  # Mixed precision
+  fp16: true
+  gradient_checkpointing: true
+
+# === EXPERIMENT TRACKING ===
+experiment:
+  tracking_system: "mlflow"  # Options: mlflow, wandb, tensorboard
+  experiment_name: "gameforge-llama2-lora"
+  run_name: "llama2-7b-lora-v1-${timestamp}"
+  tags:
+    - "llama2"
+    - "lora"
+    - "rpg-content"
+    - "gameforge"
+  
+  # Metrics to track
+  metrics:
+    - "loss"
+    - "perplexity"
+    - "learning_rate"
+    - "grad_norm"
+    - "throughput_tokens_per_sec"
+  
+  # Artifacts to save
+  artifacts:
+    - "tokenizer"
+    - "lora_weights"
+    - "training_logs"
+    - "evaluation_results"
+    - "config_snapshot"
+
+# === VALIDATION & TESTING ===
+evaluation:
+  metrics:
+    - name: "perplexity"
+      target: "< 4.0"
+      critical: true
+    - name: "bleu_score"
+      target: "> 0.7"
+      critical: false
+    - name: "rouge_l"
+      target: "> 0.6"
+      critical: false
+      
+  benchmarks:
+    - "gameforge-eval-set-v1"
+    - "hellaswag"
+    - "arc_easy"
+  
+  validation_prompts:
+    - "Generate a fantasy character backstory for a half-elf rogue"
+    - "Describe a mystical forest location for an RPG campaign"
+    - "Create dialogue between a merchant and adventurer"
+
+# === OUTPUT CONFIGURATION ===
+output:
+  model_registry_promotion: "dev"  # dev, staging, production
+  storage_location: "s3://gameforge-models/training-runs/${job_id}/"
+  manifest_update: true
+  artifacts_retention: "30 days"
+  
+  # Quality gates
+  promotion_criteria:
+    min_perplexity: 4.0
+    min_bleu_score: 0.7
+    max_training_loss: 1.5
+    required_evals: ["gameforge-eval-set-v1"]
+
+# === RESOURCE MANAGEMENT ===
+resources:
+  max_runtime: "8 hours"
+  cost_limit: "$200"
+  auto_shutdown: true
+  spot_instances: true
+  
+  checkpointing:
+    enabled: true
+    frequency: "1000 steps"
+    max_checkpoints: 5
+  
+  monitoring:
+    gpu_utilization_alert: "< 80%"
+    memory_usage_alert: "> 90%"
+    loss_divergence_alert: true
+
+# === VAST.AI SPECIFIC CONFIG ===
+vast_ai:
+  image: "gameforge/training:llama2-v1.0"
+  disk_space: "100GB"
+  jupyter: false
+  ssh: true
+  direct_port_count: 1
+  bid_price: "0.50"  # USD per hour
+  
+  # Search criteria
+  search_params:
+    gpu_name: "RTX 4090"
+    num_gpus: 1
+    gpu_ram: ">= 20"
+    cpu_cores: ">= 16"
+    ram: ">= 64"
+    inet_down: ">= 100"
+    reliability: "> 95%"
+
+# === LOCAL GPU CONFIG ===
+local_gpu:
+  gpu_devices: [0]  # CUDA device indices
+  data_loader_workers: 8
+  pin_memory: true
+  distributed: false
+  
+# === COMPLIANCE & GOVERNANCE ===
+compliance:
+  data_governance: true
+  model_card_required: true
+  ethical_review: "pending"
+  bias_evaluation: true
+  security_scan: true
+  
+  approvals:
+    - approver: "ml-lead@gameforge.dev"
+      status: "approved"
+      date: "2025-09-13"
+    - approver: "security@gameforge.dev" 
+      status: "pending"
+      date: null

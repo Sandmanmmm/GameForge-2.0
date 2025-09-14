@@ -15,6 +15,8 @@ import { PreviewWorkspace } from './components/PreviewWorkspace'
 import { GameplayStudio } from './components/GameplayStudio'
 import { CodeGenerationWorkspace } from './components/CodeGenerationWorkspace'
 import { ProjectCreationMockup } from './components/ProjectCreationMockup'
+import { ProfilePage } from './components/ProfilePage'
+import { SettingsPage } from './components/SettingsPage'
 import { Toaster } from './components/ui/sonner'
 import { useLocalStorage } from './hooks/use-local-storage'
 import { useIsMobile } from './hooks/use-mobile'
@@ -217,6 +219,18 @@ function App() {
 
   const handleSectionChange = (section: string) => {
     setCurrentSection(section)
+  }
+
+  const handleProfileBack = () => {
+    setCurrentSection('dashboard')
+  }
+
+  const handleSettingsOpen = () => {
+    setCurrentSection('settings')
+  }
+
+  const handleSettingsBack = () => {
+    setCurrentSection('profile')
   }
 
   const handleEditAsset = (asset: any) => {
@@ -656,6 +670,19 @@ function App() {
         )
       case 'creation-test':
         return <ProjectCreationMockup />
+      case 'profile':
+        return (
+          <ProfilePage 
+            onBack={handleProfileBack}
+            onSettingsOpen={handleSettingsOpen}
+          />
+        )
+      case 'settings':
+        return (
+          <SettingsPage 
+            onBack={handleSettingsBack}
+          />
+        )
       default:
         return <Dashboard onProjectSelect={handleProjectSelect} onQAWorkspace={handleQAWorkspace} projects={projects} onProjectsChange={setProjects} />
     }

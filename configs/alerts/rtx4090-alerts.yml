@@ -1,0 +1,180 @@
+groups:
+- name: rtx4090_gpu_alerts
+  rules:
+  - alert: RTX4090HighTemperature
+    expr: DCGM_FI_DEV_GPU_TEMP > 85
+    for: 2m
+    labels:
+      severity: critical
+      component: gpu
+    annotations:
+      summary: "RTX 4090 GPU temperature is critically high"
+      description: "RTX 4090 temperature is {{ $value }}°C which exceeds safe operating limits (85°C)"
+
+  - alert: RTX4090HighMemoryUsage
+    expr: (DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL) * 100 > 90
+    for: 5m
+    labels:
+      severity: warning
+      component: gpu
+    annotations:
+      summary: "RTX 4090 GPU memory usage is high"
+      description: "RTX 4090 memory usage is {{ $value }}% which may cause OOM errors"
+
+  - alert: RTX4090PowerLimitReached
+    expr: DCGM_FI_DEV_POWER_USAGE > 420
+    for: 1m
+    labels:
+      severity: critical
+      component: gpu
+    annotations:
+      summary: "RTX 4090 approaching power limit"
+      description: "RTX 4090 power draw is {{ $value }}W approaching 450W limit"
+
+  - alert: RTX4090LowUtilization
+    expr: DCGM_FI_DEV_GPU_UTIL < 10
+    for: 15m
+    labels:
+      severity: info
+      component: gpu
+    annotations:
+      summary: "RTX 4090 GPU utilization is low"
+      description: "RTX 4090 utilization is {{ $value }}% for over 15 minutes - may indicate underutilization"
+
+- name: torchserve_alerts
+  rules:
+  - alert: TorchServeHighLatency
+    expr: histogram_quantile(0.95, rate(torchserve_inference_latency_microseconds_bucket[5m])) > 5000000
+    for: 5m
+    labels:
+      severity: warning
+      component: inference
+    annotations:
+      summary: "TorchServe inference latency is high"
+      description: "95th percentile latency is {{ $value }}μs (>5s) for model {{ $labels.model_name }}"
+
+  - alert: TorchServeRequestErrors
+    expr: rate(torchserve_inference_requests_total{code!="200"}[5m]) > 0.1
+    for: 2m
+    labels:
+      severity: critical
+      component: inference
+    annotations:
+      summary: "High error rate in TorchServe"
+      description: "Error rate is {{ $value }} req/s for model {{ $labels.model_name }}"
+
+  - alert: TorchServeModelDown
+    expr: up{job="torchserve"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      component: inference
+    annotations:
+      summary: "TorchServe is down"
+      description: "TorchServe instance {{ $labels.instance }} is not responding"
+
+  - alert: TorchServeQueueBacklog
+    expr: torchserve_queue_latency_microseconds > 1000000
+    for: 3m
+    labels:
+      severity: warning
+      component: inference
+    annotations:
+      summary: "TorchServe request queue backlog"
+      description: "Queue latency is {{ $value }}μs indicating request backlog"
+
+- name: ray_cluster_alerts
+  rules:
+  - alert: RayClusterNodeDown
+    expr: ray_cluster_active_nodes < ray_cluster_total_nodes
+    for: 2m
+    labels:
+      severity: warning
+      component: compute
+    annotations:
+      summary: "Ray cluster has inactive nodes"
+      description: "{{ $value }} Ray nodes are inactive out of {{ ray_cluster_total_nodes }} total"
+
+  - alert: RayClusterHighMemoryUsage
+    expr: ray_cluster_memory_usage_percentage > 85
+    for: 5m
+    labels:
+      severity: warning
+      component: compute
+    annotations:
+      summary: "Ray cluster memory usage is high"
+      description: "Ray cluster memory usage is {{ $value }}%"
+
+  - alert: RayClusterCPUBottleneck
+    expr: ray_cluster_cpu_usage_percentage > 90
+    for: 10m
+    labels:
+      severity: warning
+      component: compute
+    annotations:
+      summary: "Ray cluster CPU usage is high"
+      description: "Ray cluster CPU usage is {{ $value }}% for over 10 minutes"
+
+- name: system_resource_alerts
+  rules:
+  - alert: HighSystemMemoryUsage
+    expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+    for: 5m
+    labels:
+      severity: critical
+      component: system
+    annotations:
+      summary: "System memory usage is critically high"
+      description: "System memory usage is {{ $value }}% which may cause system instability"
+
+  - alert: HighSystemCPUUsage
+    expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+    for: 10m
+    labels:
+      severity: warning
+      component: system
+    annotations:
+      summary: "System CPU usage is high"
+      description: "System CPU usage is {{ $value }}% for over 10 minutes"
+
+  - alert: LowDiskSpace
+    expr: 100 - ((node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100) > 85
+    for: 5m
+    labels:
+      severity: warning
+      component: system
+    annotations:
+      summary: "Low disk space available"
+      description: "Disk usage is {{ $value }}% on root filesystem"
+
+  - alert: ContainerDown
+    expr: up{job=~"torchserve|ray-head|ray-worker"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      component: container
+    annotations:
+      summary: "Container is down"
+      description: "Container {{ $labels.job }} on {{ $labels.instance }} is not responding"
+
+- name: vast_ai_alerts
+  rules:
+  - alert: VastAiInstanceTerminating
+    expr: up{job="node-exporter"} == 0
+    for: 30s
+    labels:
+      severity: critical
+      component: infrastructure
+    annotations:
+      summary: "Vast.ai instance may be terminating"
+      description: "Node exporter is not responding, instance may be shutting down"
+
+  - alert: VastAiHighNetworkLatency
+    expr: probe_duration_seconds{job="blackbox"} > 2
+    for: 5m
+    labels:
+      severity: warning
+      component: network
+    annotations:
+      summary: "High network latency detected"
+      description: "Network probe latency is {{ $value }}s which may indicate connectivity issues"

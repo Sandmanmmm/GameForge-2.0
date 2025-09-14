@@ -1,0 +1,319 @@
+# AlertManager Configuration Template for GameForge Production
+# This configuration uses environment variables that will be substituted at runtime
+
+global:
+  # Default SMTP configuration
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'gameforge-alerts@example.com'
+  smtp_auth_username: 'test@example.com'
+  smtp_auth_password: 'test_password'
+  smtp_require_tls: true
+  
+  # Slack configuration
+  slack_api_url: 'https://hooks.slack.com/services/test/test/test'
+  
+  # PagerDuty configuration
+  pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'
+  
+  # Global templates
+  http_config:
+    tls_config:
+      insecure_skip_verify: false
+  
+  # Resolve timeout for alerts
+  resolve_timeout: 5m
+
+# Templates for alert formatting
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Routing configuration
+route:
+  # Default receiver
+  receiver: 'gameforge-default'
+  
+  # Group alerts to reduce noise
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 12h
+  
+  # Routing rules
+  routes:
+    # Critical GPU/ML alerts - immediate PagerDuty
+    - match_re:
+        severity: critical
+        service: gameforge-gpu.*
+      receiver: 'gpu-critical-pagerduty'
+      group_wait: 0s
+      repeat_interval: 5m
+    
+    # High severity alerts - Slack + Email
+    - match:
+        severity: warning
+      receiver: 'gameforge-high-severity'
+      group_wait: 30s
+      repeat_interval: 4h
+    
+    # Security alerts - immediate notification
+    - match_re:
+        alertname: '.*Security.*|.*Breach.*|.*Intrusion.*'
+      receiver: 'security-alerts'
+      group_wait: 0s
+      repeat_interval: 1h
+    
+    # MLflow/Model Registry alerts
+    - match_re:
+        service: '.*mlflow.*'
+      receiver: 'mlflow-alerts'
+      group_wait: 1m
+      repeat_interval: 6h
+    
+    # Infrastructure alerts
+    - match_re:
+        service: 'postgres|redis|elasticsearch|vault'
+      receiver: 'infrastructure-alerts'
+      group_wait: 2m
+      repeat_interval: 8h
+    
+    # Development/informational alerts
+    - match:
+        severity: info
+      receiver: 'gameforge-info'
+      group_wait: 5m
+      repeat_interval: 24h
+
+# Alert receivers/notification channels
+receivers:
+  # Default receiver
+  - name: 'gameforge-default'
+    email_configs:
+      - to: 'admin@gameforge.local'
+        from: 'gameforge-alerts@example.com'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: 'test@example.com'
+        auth_password: 'test_password'
+        subject: '[GameForge] {{ .GroupLabels.alertname }} - {{ .Status }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Severity: {{ .Labels.severity }}
+          Service: {{ .Labels.service }}
+          Instance: {{ .Labels.instance }}
+          {{ end }}
+        headers:
+          X-GameForge-Environment: 'production'
+          X-Alert-Priority: 'normal'
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/test/test/test'
+        channel: '#gameforge-alerts'
+        title: 'GameForge Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Service:* {{ .Labels.service }}
+          *Instance:* {{ .Labels.instance }}
+          *Status:* {{ .Status }}
+          {{ end }}
+        icon_emoji: ':warning:'
+        username: 'GameForge AlertManager'
+
+  # Critical GPU/ML alerts with PagerDuty
+  - name: 'gpu-critical-pagerduty'
+    pagerduty_configs:
+      - routing_key: 'test_routing_key'
+        description: 'Critical GPU/ML Alert: {{ .GroupLabels.alertname }}'
+        severity: 'critical'
+        details:
+          summary: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+          environment: 'production'
+          service: '{{ .GroupLabels.service }}'
+          component: 'gpu-ml-pipeline'
+        links:
+          - href: 'http://grafana.gameforge.local:3000'
+            text: 'GameForge Dashboard'
+          - href: 'http://jaeger.gameforge.local:16686'
+            text: 'Distributed Tracing'
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/test/test/test'
+        channel: '#gameforge-critical'
+        title: '🚨 CRITICAL GPU/ML Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          <!channel> Critical GPU/ML system alert!
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.service }}
+          *GPU ID:* {{ .Labels.gpu_id }}
+          *Model:* {{ .Labels.model_name }}
+          {{ end }}
+        color: 'danger'
+        icon_emoji: ':fire:'
+        username: 'GameForge Critical Alerts'
+
+  # High severity alerts
+  - name: 'gameforge-high-severity'
+    email_configs:
+      - to: 'alerts@gameforge.local'
+        from: 'gameforge-alerts@example.com'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: 'test@example.com'
+        auth_password: 'test_password'
+        subject: '[GameForge HIGH] {{ .GroupLabels.alertname }}'
+        body: |
+          High severity alert detected in GameForge production environment.
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Severity: {{ .Labels.severity }}
+          Service: {{ .Labels.service }}
+          Instance: {{ .Labels.instance }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+          
+          Dashboard: http://grafana.gameforge.local:3000
+          Logs: http://grafana.gameforge.local:3000/explore
+        headers:
+          X-GameForge-Environment: 'production'
+          X-Alert-Priority: 'high'
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/test/test/test'
+        channel: '#gameforge-alerts'
+        title: '⚠️ High Severity: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.service }}
+          *Instance:* {{ .Labels.instance }}
+          {{ end }}
+        color: 'warning'
+        icon_emoji: ':warning:'
+
+  # Security alerts
+  - name: 'security-alerts'
+    email_configs:
+      - to: 'security@gameforge.local'
+        from: 'gameforge-alerts@example.com'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: 'test@example.com'
+        auth_password: 'test_password'
+        subject: '[GameForge SECURITY] {{ .GroupLabels.alertname }}'
+        body: |
+          SECURITY ALERT DETECTED
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Source: {{ .Labels.instance }}
+          Time: {{ .StartsAt }}
+          {{ end }}
+          
+          Immediate investigation required.
+        headers:
+          X-GameForge-Security: 'ALERT'
+          X-Alert-Priority: 'critical'
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/test/test/test'
+        channel: '#gameforge-security'
+        title: '🔒 SECURITY ALERT: {{ .GroupLabels.alertname }}'
+        text: |
+          <!here> Security incident detected!
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Source:* {{ .Labels.instance }}
+          *Time:* {{ .StartsAt }}
+          {{ end }}
+        color: 'danger'
+        icon_emoji: ':lock:'
+
+  # MLflow/Model Registry alerts
+  - name: 'mlflow-alerts'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/test/test/test'
+        channel: '#gameforge-ml-ops'
+        title: '🤖 MLflow Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *ML Platform Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.service }}
+          *Model:* {{ .Labels.model_name }}
+          {{ end }}
+        icon_emoji: ':robot_face:'
+
+  # Infrastructure alerts
+  - name: 'infrastructure-alerts'
+    email_configs:
+      - to: 'infra@gameforge.local'
+        from: 'gameforge-alerts@example.com'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: 'test@example.com'
+        auth_password: 'test_password'
+        subject: '[GameForge Infrastructure] {{ .GroupLabels.alertname }}'
+        body: |
+          Infrastructure alert for GameForge production.
+          
+          {{ range .Alerts }}
+          Service: {{ .Labels.service }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Instance: {{ .Labels.instance }}
+          {{ end }}
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/test/test/test'
+        channel: '#gameforge-infrastructure'
+        title: '🏗️ Infrastructure: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Service:* {{ .Labels.service }}
+          *Alert:* {{ .Annotations.summary }}
+          *Instance:* {{ .Labels.instance }}
+          {{ end }}
+        icon_emoji: ':building_construction:'
+
+  # Informational alerts
+  - name: 'gameforge-info'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/test/test/test'
+        channel: '#gameforge-info'
+        title: 'ℹ️ Info: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Info:* {{ .Annotations.summary }}
+          *Service:* {{ .Labels.service }}
+          {{ end }}
+        icon_emoji: ':information_source:'
+
+# Inhibition rules to reduce alert noise
+inhibit_rules:
+  # Inhibit warning alerts when critical alerts are firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'service', 'instance']
+  
+  # Inhibit GPU warning alerts when GPU critical alerts are firing
+  - source_match_re:
+      alertname: 'GPU.*Critical'
+    target_match_re:
+      alertname: 'GPU.*Warning'
+    equal: ['instance', 'gpu_id']
+  
+  # Inhibit downstream service alerts when upstream is down
+  - source_match:
+      alertname: 'PostgresDown'
+    target_match_re:
+      alertname: 'GameForge.*DBConnection.*'
+    equal: ['instance']

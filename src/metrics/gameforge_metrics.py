@@ -5,22 +5,33 @@
 
 import time
 import psutil
-import nvidia_ml_py3 as nvml
 from prometheus_client import Counter, Histogram, Gauge, Info, generate_latest
 from flask import Flask, Response
 import threading
 from functools import wraps
+
+# Optional NVIDIA GPU monitoring
+try:
+    import nvidia_ml_py3 as nvml
+    NVIDIA_AVAILABLE = True
+except ImportError:
+    nvml = None
+    NVIDIA_AVAILABLE = False
 
 class GameForgeMetrics:
     """Production metrics collection for GameForge AI platform"""
     
     def __init__(self):
         # Initialize NVIDIA ML
-        try:
-            nvml.nvmlInit()
-            self.gpu_available = True
-            self.gpu_count = nvml.nvmlDeviceGetCount()
-        except:
+        if NVIDIA_AVAILABLE:
+            try:
+                nvml.nvmlInit()
+                self.gpu_available = True
+                self.gpu_count = nvml.nvmlDeviceGetCount()
+            except Exception:
+                self.gpu_available = False
+                self.gpu_count = 0
+        else:
             self.gpu_available = False
             self.gpu_count = 0
         

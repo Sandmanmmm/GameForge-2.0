@@ -1,0 +1,361 @@
+# GameForge Production Alert Rules
+# Comprehensive alerting for AI/ML and game development workloads
+
+groups:
+  # ====================================================================
+  # CRITICAL SYSTEM ALERTS
+  # ====================================================================
+  - name: gameforge.critical
+    interval: 30s
+    rules:
+      # Service down alerts
+      - alert: GameForgeAppDown
+        expr: up{job="gameforge-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: gameforge-app
+          component: application
+        annotations:
+          summary: "GameForge main application is down"
+          description: "GameForge application has been down for more than 1 minute. Instance: {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/app-down"
+
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: postgres
+          component: database
+        annotations:
+          summary: "PostgreSQL database is down"
+          description: "PostgreSQL database has been down for more than 2 minutes. Instance: {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/postgres-down"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: redis
+          component: cache
+        annotations:
+          summary: "Redis cache is down"
+          description: "Redis cache has been down for more than 1 minute. Instance: {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/redis-down"
+
+  # ====================================================================
+  # GPU & ML WORKLOAD ALERTS
+  # ====================================================================
+  - name: gameforge.gpu-ml
+    interval: 15s
+    rules:
+      # GPU service alerts
+      - alert: GPUInferenceServiceDown
+        expr: up{job="gameforge-gpu-inference"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: gameforge-gpu-inference
+          component: gpu-ml
+        annotations:
+          summary: "GPU Inference service is down"
+          description: "GPU Inference service has been down for more than 30 seconds. Instance: {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/gpu-inference-down"
+
+      - alert: GPUTrainingServiceDown
+        expr: up{job="gameforge-gpu-training"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: gameforge-gpu-training
+          component: gpu-ml
+        annotations:
+          summary: "GPU Training service is down"
+          description: "GPU Training service has been down for more than 1 minute. Instance: {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/gpu-training-down"
+
+      # GPU utilization alerts
+      - alert: GPUHighUtilization
+        expr: gpu_utilization > 95
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+          component: gpu
+        annotations:
+          summary: "GPU utilization is critically high"
+          description: "GPU {{ $labels.gpu_id }} utilization is {{ $value }}% for more than 5 minutes on {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/gpu-high-utilization"
+
+      - alert: GPUMemoryHigh
+        expr: (gpu_memory_used / gpu_memory_total) * 100 > 90
+        for: 3m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+          component: gpu
+        annotations:
+          summary: "GPU memory usage is critically high"
+          description: "GPU {{ $labels.gpu_id }} memory usage is {{ $value }}% for more than 3 minutes on {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/gpu-memory-high"
+
+      # ML inference performance
+      - alert: InferenceLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(inference_duration_seconds_bucket[5m])) by (le, service)) > 5
+        for: 2m
+        labels:
+          severity: warning
+          service: gameforge-gpu-inference
+          component: ml-performance
+        annotations:
+          summary: "ML inference latency is high"
+          description: "95th percentile inference latency is {{ $value }}s for more than 2 minutes"
+          runbook_url: "https://docs.gameforge.local/runbooks/inference-latency-high"
+
+      - alert: ModelLoadFailure
+        expr: increase(model_load_failures_total[5m]) > 3
+        for: 1m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+          component: ml-models
+        annotations:
+          summary: "Multiple model load failures detected"
+          description: "{{ $value }} model load failures in the last 5 minutes on {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/model-load-failure"
+
+  # ====================================================================
+  # MLFLOW & MODEL REGISTRY ALERTS
+  # ====================================================================
+  - name: gameforge.mlflow
+    interval: 30s
+    rules:
+      - alert: MLflowServerDown
+        expr: up{job="mlflow-server"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: mlflow-server
+          component: ml-platform
+        annotations:
+          summary: "MLflow tracking server is down"
+          description: "MLflow tracking server has been down for more than 2 minutes"
+          runbook_url: "https://docs.gameforge.local/runbooks/mlflow-down"
+
+      - alert: ModelRegistryDown
+        expr: up{job="mlflow-registry"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: mlflow-registry
+          component: ml-platform
+        annotations:
+          summary: "MLflow model registry is down"
+          description: "MLflow model registry has been down for more than 2 minutes"
+          runbook_url: "https://docs.gameforge.local/runbooks/registry-down"
+
+      - alert: ModelRegistrationFailure
+        expr: increase(mlflow_model_registration_failures_total[10m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          service: mlflow-registry
+          component: ml-models
+        annotations:
+          summary: "High model registration failure rate"
+          description: "{{ $value }} model registration failures in the last 10 minutes"
+          runbook_url: "https://docs.gameforge.local/runbooks/model-registration-failure"
+
+      - alert: CanaryDeploymentFailed
+        expr: mlflow_canary_deployment_status == 0
+        for: 1m
+        labels:
+          severity: warning
+          service: mlflow-canary
+          component: ml-deployment
+        annotations:
+          summary: "Canary deployment failed"
+          description: "Canary deployment for model {{ $labels.model_name }} has failed"
+          runbook_url: "https://docs.gameforge.local/runbooks/canary-deployment-failed"
+
+  # ====================================================================
+  # PERFORMANCE & RESOURCE ALERTS
+  # ====================================================================
+  - name: gameforge.performance
+    interval: 30s
+    rules:
+      # High response time
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)) > 2
+        for: 3m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+          component: performance
+        annotations:
+          summary: "High HTTP response time"
+          description: "95th percentile response time is {{ $value }}s for service {{ $labels.service }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/high-response-time"
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: (sum(rate(http_requests_total{status=~"5.."}[5m])) by (service) / sum(rate(http_requests_total[5m])) by (service)) * 100 > 5
+        for: 2m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+          component: application
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }}% for service {{ $labels.service }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/high-error-rate"
+
+      # Memory usage alerts
+      - alert: HighMemoryUsage
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) * 100 > 85
+        for: 3m
+        labels:
+          severity: warning
+          service: "{{ $labels.container_label_com_docker_compose_service }}"
+          component: resources
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}% for container {{ $labels.name }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/high-memory-usage"
+
+      # CPU usage alerts
+      - alert: HighCPUUsage
+        expr: (rate(container_cpu_usage_seconds_total[5m]) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.container_label_com_docker_compose_service }}"
+          component: resources
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}% for container {{ $labels.name }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/high-cpu-usage"
+
+  # ====================================================================
+  # INFRASTRUCTURE ALERTS
+  # ====================================================================
+  - name: gameforge.infrastructure
+    interval: 60s
+    rules:
+      # Disk space alerts
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"}) * 100 < 10
+        for: 2m
+        labels:
+          severity: critical
+          service: filesystem
+          component: infrastructure
+        annotations:
+          summary: "Low disk space"
+          description: "Disk space is {{ $value }}% available on {{ $labels.mountpoint }} at {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/disk-space-low"
+
+      # Network connectivity
+      - alert: HighNetworkErrors
+        expr: rate(node_network_receive_errs_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: network
+          component: infrastructure
+        annotations:
+          summary: "High network errors"
+          description: "Network interface {{ $labels.device }} is receiving {{ $value }} errors/second on {{ $labels.instance }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/network-errors"
+
+      # Certificate expiration
+      - alert: SSLCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 7
+        for: 1h
+        labels:
+          severity: warning
+          service: ssl
+          component: security
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/ssl-cert-expiring"
+
+  # ====================================================================
+  # SECURITY ALERTS
+  # ====================================================================
+  - name: gameforge.security
+    interval: 30s
+    rules:
+      # Failed authentication attempts
+      - alert: HighFailedAuthAttempts
+        expr: increase(auth_failures_total[5m]) > 20
+        for: 1m
+        labels:
+          severity: warning
+          service: authentication
+          component: security
+        annotations:
+          summary: "High number of failed authentication attempts"
+          description: "{{ $value }} failed authentication attempts in the last 5 minutes"
+          runbook_url: "https://docs.gameforge.local/runbooks/failed-auth-attempts"
+
+      # Vault seal status
+      - alert: VaultSealed
+        expr: vault_core_unsealed == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: vault
+          component: security
+        annotations:
+          summary: "HashiCorp Vault is sealed"
+          description: "Vault instance is sealed and unable to decrypt secrets"
+          runbook_url: "https://docs.gameforge.local/runbooks/vault-sealed"
+
+      # Security scanner alerts
+      - alert: HighSeverityVulnerabilities
+        expr: trivy_vulnerabilities{severity="CRITICAL"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: security-scanner
+          component: security
+        annotations:
+          summary: "Critical vulnerabilities detected"
+          description: "{{ $value }} critical vulnerabilities found in {{ $labels.image }}"
+          runbook_url: "https://docs.gameforge.local/runbooks/critical-vulnerabilities"
+
+  # ====================================================================
+  # BUSINESS LOGIC ALERTS
+  # ====================================================================
+  - name: gameforge.business
+    interval: 60s
+    rules:
+      # Asset generation failures
+      - alert: AssetGenerationFailures
+        expr: increase(asset_generation_failures_total[10m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: gameforge-app
+          component: asset-generation
+        annotations:
+          summary: "High asset generation failure rate"
+          description: "{{ $value }} asset generation failures in the last 10 minutes"
+          runbook_url: "https://docs.gameforge.local/runbooks/asset-generation-failures"
+
+      # User session anomalies
+      - alert: AbnormalUserActivity
+        expr: rate(user_sessions_created_total[5m]) > rate(user_sessions_created_total[5m] offset 1h) * 3
+        for: 3m
+        labels:
+          severity: warning
+          service: gameforge-app
+          component: user-activity
+        annotations:
+          summary: "Abnormal user activity detected"
+          description: "User session creation rate is {{ $value }}x higher than usual"
+          runbook_url: "https://docs.gameforge.local/runbooks/abnormal-user-activity"

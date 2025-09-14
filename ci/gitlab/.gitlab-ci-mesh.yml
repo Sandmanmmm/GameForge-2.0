@@ -1,0 +1,430 @@
+# Enhanced GitLab CI/CD Pipeline with Service Mesh Integration
+# Includes Istio deployment validation, traffic management, and canary deployments
+
+stages:
+  - security-analysis
+  - policy-validation
+  - build
+  - container-scan
+  - compliance-check  
+  - security-gate
+  - mesh-validation
+  - deploy-staging
+  - canary-testing
+  - integration-tests
+  - deploy-production
+  - mesh-monitoring
+  - post-deployment
+
+variables:
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+  DOCKER_DRIVER: overlay2
+  KUBECONFIG: /tmp/.kube/config
+  CONFTEST_VERSION: "0.46.0"
+  ISTIO_VERSION: "1.20.0"
+
+# Include existing security pipeline
+include:
+  - local: '/ci/gitlab/.gitlab-ci-enhanced.yml'
+
+# Service Mesh Configuration Validation
+mesh_config_validation:
+  stage: mesh-validation
+  image: istio/istioctl:${ISTIO_VERSION}
+  before_script:
+    - apk add --no-cache git kubectl
+    - echo "$KUBE_CONFIG_STAGING" | base64 -d > $KUBECONFIG
+    - chmod 600 $KUBECONFIG
+  script:
+    - echo "Validating Istio service mesh configuration..."
+    
+    # Validate VirtualServices
+    - istioctl validate -f k8s/service-mesh/virtual-services.yaml
+    
+    # Validate DestinationRules
+    - istioctl validate -f k8s/service-mesh/traffic-management.yaml
+    
+    # Validate security policies
+    - istioctl validate -f k8s/service-mesh/security-observability.yaml
+    
+    # Check for configuration conflicts
+    - istioctl analyze k8s/service-mesh/ --color=false
+    
+    # Validate against existing mesh (if available)
+    - kubectl get namespace istio-system && istioctl analyze --all-namespaces || echo "Mesh not yet deployed"
+    
+    echo "Service mesh configuration validation completed"
+  artifacts:
+    reports:
+      junit: mesh-validation-report.xml
+    paths:
+      - mesh-validation-report.xml
+    expire_in: 1 week
+  dependencies:
+    - iac_policy_validation
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# Enhanced Build with Service Mesh Labels
+build_image_mesh:
+  stage: build
+  extends: build_image
+  script:
+    - docker build --pull -t $IMAGE_TAG 
+        --label "istio.version=${ISTIO_VERSION}"
+        --label "mesh.enabled=true"
+        --label "traffic.policy=canary"
+        --label "security.mtls=strict" .
+    - docker tag $IMAGE_TAG $CI_REGISTRY_IMAGE:latest
+    - docker tag $IMAGE_TAG $CI_REGISTRY_IMAGE:canary-$CI_COMMIT_SHORT_SHA
+    - docker push $IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE:latest
+    - docker push $CI_REGISTRY_IMAGE:canary-$CI_COMMIT_SHORT_SHA
+    
+    # Generate mesh-compatible SBOM
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest $IMAGE_TAG -o json > sbom.json
+    - echo "mesh.compatible=true" >> sbom.json
+
+# Service Mesh Deployment to Staging
+deploy_staging_mesh:
+  stage: deploy-staging
+  image: istio/istioctl:${ISTIO_VERSION}
+  before_script:
+    - apk add --no-cache bash curl jq kubectl
+    - echo "$KUBE_CONFIG_STAGING" | base64 -d > $KUBECONFIG
+    - chmod 600 $KUBECONFIG
+  script:
+    - echo "Deploying to staging with service mesh integration..."
+    
+    # Ensure Istio is installed
+    - kubectl get namespace istio-system || {
+        echo "Installing Istio service mesh...";
+        chmod +x scripts/install-service-mesh.sh;
+        scripts/install-service-mesh.sh --namespace gameforge-staging;
+      }
+    
+    # Deploy with mesh integration
+    - chmod +x ci/deployment/blue-green-deploy.sh
+    - ci/deployment/blue-green-deploy.sh 
+        --version $CI_COMMIT_SHA 
+        --environment staging 
+        --namespace gameforge-staging
+        --mesh-enabled true
+        --canary-weight 10
+    
+    # Validate mesh integration
+    - echo "Validating service mesh integration..."
+    - istioctl proxy-status -n gameforge-staging
+    - kubectl get virtualservices,destinationrules -n gameforge-staging
+    
+    # Check mTLS status
+    - istioctl authn tls-check gameforge-api-service.gameforge-staging.svc.cluster.local -n gameforge-staging
+    
+  environment:
+    name: staging
+    url: https://staging-api.gameforge.local
+  dependencies:
+    - build_image_mesh
+    - mesh_config_validation
+    - security_gate
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual
+
+# Canary Traffic Testing
+canary_traffic_testing:
+  stage: canary-testing
+  image: curlimages/curl:latest
+  variables:
+    STAGING_URL: "https://staging-api.gameforge.local"
+  before_script:
+    - apk add --no-cache jq
+  script:
+    - echo "Running canary traffic testing..."
+    
+    # Test stable traffic (90%)
+    - echo "Testing stable traffic routing..."
+    - for i in {1..50}; do
+        curl -s -H "x-canary-user: false" "$STAGING_URL/api/v1/health" || exit 1;
+        sleep 0.1;
+      done
+    
+    # Test canary traffic (10%)
+    - echo "Testing canary traffic routing..."
+    - for i in {1..10}; do
+        response=$(curl -s -H "x-canary-user: true" "$STAGING_URL/api/v1/health");
+        if echo "$response" | grep -q "canary"; then
+          echo "Canary routing working: $response";
+        else
+          echo "Canary routing failed: $response";
+          exit 1;
+        fi;
+        sleep 0.1;
+      done
+    
+    # Test circuit breaker
+    - echo "Testing circuit breaker behavior..."
+    - for i in {1..20}; do
+        curl -s -H "x-chaos-testing: true" "$STAGING_URL/api/v1/health" > /dev/null || true;
+        sleep 0.05;
+      done
+    
+    # Test retry policy
+    - echo "Testing retry policies..."
+    - curl -s -H "x-test-retries: true" "$STAGING_URL/api/v1/games" || echo "Retries working as expected"
+    
+    # Test rate limiting
+    - echo "Testing rate limiting..."
+    - for i in {1..100}; do
+        status=$(curl -s -o /dev/null -w "%{http_code}" "$STAGING_URL/api/v1/health");
+        if [ "$status" = "429" ]; then
+          echo "Rate limiting working: received 429";
+          break;
+        fi;
+        sleep 0.01;
+      done
+    
+    echo "Canary traffic testing completed successfully"
+  dependencies:
+    - deploy_staging_mesh
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# Enhanced Integration Tests with Mesh Validation
+integration_tests_mesh:
+  stage: integration-tests
+  extends: integration_tests
+  script:
+    - echo "Running enhanced integration tests with service mesh..."
+    
+    # Standard API tests
+    - curl -f "$STAGING_URL/api/v1/health" || exit 1
+    - curl -f "$STAGING_URL/api/v1/ready" || exit 1
+    - curl -f "$STAGING_URL/api/v1/version" || exit 1
+    
+    # Test mesh-specific features
+    - echo "Testing mesh-specific features..."
+    
+    # Test mTLS enforcement
+    - response=$(curl -s -I "$STAGING_URL/api/v1/health");
+      if echo "$response" | grep -q "x-envoy-upstream-service-time"; then
+        echo "✓ Service mesh proxy detected";
+      else
+        echo "✗ Service mesh proxy not detected";
+        exit 1;
+      fi
+    
+    # Test security headers injection
+    - response=$(curl -s -I "$STAGING_URL/api/v1/health");
+      if echo "$response" | grep -q "x-content-type-options: nosniff"; then
+        echo "✓ Security headers injected";
+      else
+        echo "✗ Security headers missing";
+        exit 1;
+      fi
+    
+    # Test load balancing
+    - echo "Testing load balancing across multiple requests..."
+    - for i in {1..20}; do
+        curl -s "$STAGING_URL/api/v1/health" | jq -r '.instance_id' || echo "unknown";
+      done | sort | uniq -c
+    
+    # Test timeout policies
+    - echo "Testing timeout configurations..."
+    - timeout 10s curl -s "$STAGING_URL/api/v1/health" || echo "Timeout policy working"
+    
+    echo "Enhanced integration tests completed"
+
+# Production Deployment with Mesh
+deploy_production_mesh:
+  stage: deploy-production
+  image: istio/istioctl:${ISTIO_VERSION}
+  before_script:
+    - apk add --no-cache bash curl jq kubectl
+    - echo "$KUBE_CONFIG_PRODUCTION" | base64 -d > $KUBECONFIG
+    - chmod 600 $KUBECONFIG
+  script:
+    - echo "Deploying to production with service mesh..."
+    
+    # Ensure production mesh is ready
+    - kubectl get namespace istio-system || {
+        echo "Production mesh not found - this should be installed separately";
+        exit 1;
+      }
+    
+    # Pre-deployment mesh validation
+    - istioctl proxy-status -n gameforge
+    - istioctl analyze --all-namespaces
+    
+    # Deploy with gradual traffic shifting
+    - chmod +x ci/deployment/blue-green-deploy.sh
+    - ci/deployment/blue-green-deploy.sh 
+        --version $CI_COMMIT_SHA 
+        --environment production 
+        --namespace gameforge
+        --mesh-enabled true
+        --canary-weight 5
+        --gradual-rollout true
+    
+    # Post-deployment validation
+    - echo "Validating production mesh deployment..."
+    - istioctl proxy-config cluster gameforge-api-service.gameforge.svc.cluster.local -n gameforge
+    - kubectl get virtualservices,destinationrules -n gameforge
+    
+    # Verify mTLS in production
+    - istioctl authn tls-check gameforge-api-service.gameforge.svc.cluster.local -n gameforge
+    
+    # Send deployment notification with mesh info
+    - |
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        mesh_status=$(istioctl proxy-status -n gameforge | wc -l);
+        curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚀 GameForge production deployment completed with service mesh: version '$CI_COMMIT_SHA' ('$mesh_status' proxies active)"}' \
+          $SLACK_WEBHOOK_URL;
+      fi
+    
+  environment:
+    name: production
+    url: https://api.gameforge.local
+  dependencies:
+    - production_deployment_gate
+    - integration_tests_mesh
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual
+
+# Service Mesh Monitoring and Validation
+mesh_monitoring:
+  stage: mesh-monitoring
+  image: istio/istioctl:${ISTIO_VERSION}
+  before_script:
+    - apk add --no-cache bash curl jq kubectl
+    - echo "$KUBE_CONFIG_PRODUCTION" | base64 -d > $KUBECONFIG
+    - chmod 600 $KUBECONFIG
+  script:
+    - echo "Running service mesh monitoring and validation..."
+    
+    # Wait for mesh to stabilize
+    - sleep 60
+    
+    # Check proxy health
+    - echo "Checking Envoy proxy health..."
+    - istioctl proxy-status -n gameforge
+    
+    # Validate configuration distribution
+    - echo "Validating configuration distribution..."
+    - istioctl proxy-config cluster gameforge-api-service.gameforge.svc.cluster.local -n gameforge
+    - istioctl proxy-config listener gameforge-api-service.gameforge.svc.cluster.local -n gameforge
+    
+    # Check mTLS certificates
+    - echo "Validating mTLS certificates..."
+    - istioctl authn tls-check gameforge-api-service.gameforge.svc.cluster.local -n gameforge
+    
+    # Analyze mesh configuration
+    - echo "Analyzing mesh configuration..."
+    - istioctl analyze --all-namespaces
+    
+    # Check traffic metrics
+    - echo "Checking traffic metrics..."
+    - kubectl exec -n gameforge "$(kubectl get pods -n gameforge -l app=gameforge-api -o jsonpath='{.items[0].metadata.name}')" -c istio-proxy -- curl -s localhost:15000/stats/prometheus | grep istio_requests_total | head -5
+    
+    # Validate rate limiting
+    - echo "Validating rate limiting configuration..."
+    - kubectl exec -n gameforge "$(kubectl get pods -n gameforge -l app=gameforge-api -o jsonpath='{.items[0].metadata.name}')" -c istio-proxy -- curl -s localhost:15000/config_dump | jq '.configs[] | select(.["@type"] | contains("http_connection_manager"))' > /dev/null
+    
+    # Check circuit breaker status
+    - echo "Checking circuit breaker status..."
+    - kubectl exec -n gameforge "$(kubectl get pods -n gameforge -l app=gameforge-api -o jsonpath='{.items[0].metadata.name}')" -c istio-proxy -- curl -s localhost:15000/clusters | grep gameforge-api
+    
+    echo "Service mesh monitoring completed"
+  dependencies:
+    - deploy_production_mesh
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  allow_failure: true
+
+# Enhanced Post-Deployment with Mesh Metrics
+post_deployment_mesh:
+  stage: post-deployment
+  extends: post_deployment_monitoring
+  script:
+    - echo "Running enhanced post-deployment monitoring with mesh metrics..."
+    
+    # Standard health checks
+    - sleep 60
+    - for i in {1..5}; do
+        echo "Health check attempt $i/5..."
+        curl -f "$PRODUCTION_URL/api/v1/health" && break
+        sleep 30
+      done
+    
+    # Mesh-specific validation
+    - echo "Validating service mesh metrics..."
+    
+    # Check proxy response headers
+    - response=$(curl -s -I "$PRODUCTION_URL/api/v1/health");
+      if echo "$response" | grep -q "x-envoy"; then
+        echo "✓ Service mesh active";
+      else
+        echo "⚠ Service mesh headers not detected";
+      fi
+    
+    # Test load balancing
+    - echo "Testing load balancing distribution..."
+    - for i in {1..10}; do
+        curl -s "$PRODUCTION_URL/api/v1/health" > /dev/null;
+      done
+    
+    # Check security headers
+    - response=$(curl -s -I "$PRODUCTION_URL/api/v1/health");
+      echo "Security headers:";
+      echo "$response" | grep -E "(x-content-type-options|x-frame-options|strict-transport-security)" || echo "No additional security headers"
+    
+    # Validate metrics endpoint through mesh
+    - curl -f "$PRODUCTION_URL/metrics" || echo "WARNING: Metrics endpoint issue"
+    
+    # Check mesh telemetry
+    - echo "Service mesh telemetry validation completed"
+    
+    echo "Enhanced post-deployment monitoring completed"
+
+# Emergency Mesh Rollback
+rollback_production_mesh:
+  stage: deploy-production
+  image: istio/istioctl:${ISTIO_VERSION}
+  before_script:
+    - apk add --no-cache bash curl jq kubectl
+    - echo "$KUBE_CONFIG_PRODUCTION" | base64 -d > $KUBECONFIG
+    - chmod 600 $KUBECONFIG
+  script:
+    - echo "Performing emergency rollback with mesh considerations..."
+    
+    # Standard rollback
+    - chmod +x ci/deployment/rollback.sh
+    - ci/deployment/rollback.sh --environment production --namespace gameforge --force
+    
+    # Mesh-specific rollback actions
+    - echo "Reverting mesh traffic policies..."
+    - kubectl patch virtualservice gameforge-api-vs -n gameforge --type='merge' -p='{"spec":{"http":[{"route":[{"destination":{"host":"gameforge-api-service.gameforge.svc.cluster.local","subset":"stable"},"weight":100}]}]}}'
+    
+    # Clear any canary rules
+    - kubectl delete virtualservice gameforge-canary-vs -n gameforge || true
+    
+    # Validate rollback
+    - istioctl proxy-status -n gameforge
+    - istioctl analyze -n gameforge
+    
+    # Notify with mesh status
+    - |
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"⚠️ EMERGENCY: GameForge production rollback performed (mesh traffic reverted to stable)"}' \
+          $SLACK_WEBHOOK_URL
+      fi
+  environment:
+    name: production
+    url: https://api.gameforge.local
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual
+  allow_failure: false

@@ -1,0 +1,128 @@
+# GameForge Dataset Manifest
+#
+# This file contains pointers to dataset shards, license and consent metadata,
+# and pre-processing scripts in services/inference/
+
+# === DATASET REGISTRY ===
+datasets:
+  
+  # RPG Game Content Dataset
+  gameforge-rpg-content-v1:
+    name: "GameForge RPG Content Dataset v1"
+    version: "1.0.0"
+    description: "Curated RPG game content for story generation and character development"
+    created_at: "2025-09-13T10:00:00Z"
+    
+    # Data Shards - stored externally
+    shards:
+      - shard_id: "rpg-stories-001"
+        location: "s3://gameforge-datasets/rpg-content-v1/stories/shard-001.parquet"
+        size_bytes: 524288000  # ~500MB
+        record_count: 125000
+        sha256: "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+        
+      - shard_id: "rpg-characters-001" 
+        location: "s3://gameforge-datasets/rpg-content-v1/characters/shard-001.parquet"
+        size_bytes: 209715200  # ~200MB
+        record_count: 50000
+        sha256: "b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef1234567a"
+        
+      - shard_id: "rpg-worldbuilding-001"
+        location: "s3://gameforge-datasets/rpg-content-v1/worldbuilding/shard-001.parquet" 
+        size_bytes: 314572800  # ~300MB
+        record_count: 75000
+        sha256: "c3d4e5f6789012345678901234567890abcdef1234567890abcdef1234567ab2"
+    
+    # License and Compliance
+    license:
+      type: "custom-gameforge"
+      file: "s3://gameforge-datasets/rpg-content-v1/LICENSE.txt"
+      commercial_use: true
+      attribution_required: false
+      redistribution: "prohibited"
+      
+    consent:
+      user_consent_obtained: true
+      consent_form: "s3://gameforge-datasets/rpg-content-v1/consent/user-consent-v1.pdf"
+      anonymization_applied: true
+      data_retention_period: "7 years"
+      gdpr_compliant: true
+      
+    # Pre-processing Scripts
+    preprocessing:
+      scripts_location: "services/inference/preprocessing/"
+      scripts:
+        - name: "rpg_content_tokenizer.py"
+          purpose: "Tokenize RPG content for model training"
+          input_format: "parquet"
+          output_format: "jsonl"
+          
+        - name: "content_filter.py"
+          purpose: "Filter inappropriate content and validate quality"
+          filters: ["profanity", "violence_level", "content_rating"]
+          
+        - name: "dataset_splitter.py"
+          purpose: "Split dataset into train/validation/test sets"
+          split_ratios: [0.8, 0.1, 0.1]
+
+  # Character Artwork Dataset  
+  gameforge-character-art-v1:
+    name: "GameForge Character Artwork Dataset v1"
+    version: "1.0.0"
+    description: "Character artwork and visual assets for AI generation training"
+    created_at: "2025-09-13T11:00:00Z"
+    
+    shards:
+      - shard_id: "character-portraits-001"
+        location: "s3://gameforge-datasets/character-art-v1/portraits/shard-001.tar.gz"
+        size_bytes: 1073741824  # ~1GB
+        record_count: 10000
+        sha256: "d4e5f6789012345678901234567890abcdef1234567890abcdef1234567abc3"
+        format: "png"
+        resolution: "512x512"
+        
+    license:
+      type: "cc-by-sa-4.0"
+      file: "s3://gameforge-datasets/character-art-v1/LICENSE.txt"
+      commercial_use: true
+      attribution_required: true
+      redistribution: "allowed_with_attribution"
+      
+    consent:
+      user_consent_obtained: true
+      artist_consent_forms: "s3://gameforge-datasets/character-art-v1/consent/"
+      usage_rights_verified: true
+      commercial_rights_cleared: true
+      
+    preprocessing:
+      scripts_location: "services/inference/preprocessing/"
+      scripts:
+        - name: "image_preprocessor.py"
+          purpose: "Resize, normalize and augment character artwork"
+          transformations: ["resize", "normalize", "augment"]
+          
+        - name: "metadata_extractor.py"
+          purpose: "Extract character attributes from artwork"
+          attributes: ["style", "gender", "race", "class", "equipment"]
+
+# === DATASET VALIDATION ===
+validation:
+  required_fields: ["name", "version", "shards", "license", "consent"]
+  shard_integrity_check: true
+  license_compliance_check: true
+  consent_verification: true
+  
+# === ACCESS CONTROL ===
+access:
+  classification: "internal"
+  access_level: "gameforge-ml-team"
+  approval_required: true
+  audit_logging: true
+  
+# === MONITORING ===
+monitoring:
+  usage_tracking: true
+  access_logs: "s3://gameforge-audit/dataset-access/"
+  compliance_reports: "monthly"
+  last_audit: "2025-09-13"
+  next_audit: "2025-10-13"

@@ -1,0 +1,165 @@
+{{/* GameForge AlertManager Templates */}}
+
+{{/* Email template for critical alerts */}}
+{{ define "email.critical.subject" }}
+[GameForge CRITICAL] {{ .GroupLabels.alertname }} in {{ .GroupLabels.service }}
+{{ end }}
+
+{{ define "email.critical.body" }}
+🚨 CRITICAL ALERT DETECTED IN GAMEFORGE PRODUCTION 🚨
+
+{{ range .Alerts }}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔥 ALERT: {{ .Annotations.summary }}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 Description: {{ .Annotations.description }}
+🏷️  Severity: {{ .Labels.severity }}
+🛠️  Service: {{ .Labels.service }}
+🖥️  Instance: {{ .Labels.instance }}
+📅 Started: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+{{ if .Labels.gpu_id }}🎮 GPU ID: {{ .Labels.gpu_id }}{{ end }}
+{{ if .Labels.model_name }}🤖 Model: {{ .Labels.model_name }}{{ end }}
+
+🔗 LINKS:
+- Dashboard: http://grafana.gameforge.local:3000
+- Traces: http://jaeger.gameforge.local:16686
+- Logs: http://grafana.gameforge.local:3000/explore
+{{ if .GeneratorURL }}
+- Alert Source: {{ .GeneratorURL }}
+{{ end }}
+
+{{ end }}
+
+⚠️  IMMEDIATE ACTION REQUIRED ⚠️
+
+This is a critical alert that requires immediate attention. Please investigate and resolve as soon as possible.
+
+GameForge Production Monitoring
+{{ end }}
+
+{{/* Slack template for GPU alerts */}}
+{{ define "slack.gpu.title" }}
+{{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} GPU Alert: {{ .GroupLabels.alertname }}
+{{ end }}
+
+{{ define "slack.gpu.text" }}
+{{ if eq .Status "firing" }}
+🔥 *GPU System Alert Detected!*
+{{ else }}
+✅ *GPU Alert Resolved*
+{{ end }}
+
+{{ range .Alerts }}
+*Service:* {{ .Labels.service }}
+*GPU ID:* {{ if .Labels.gpu_id }}{{ .Labels.gpu_id }}{{ else }}N/A{{ end }}
+*Model:* {{ if .Labels.model_name }}{{ .Labels.model_name }}{{ else }}N/A{{ end }}
+*Summary:* {{ .Annotations.summary }}
+*Description:* {{ .Annotations.description }}
+{{ if .Labels.gpu_utilization }}*GPU Utilization:* {{ .Labels.gpu_utilization }}%{{ end }}
+{{ if .Labels.gpu_memory_used }}*GPU Memory:* {{ .Labels.gpu_memory_used }}{{ end }}
+*Instance:* {{ .Labels.instance }}
+*Time:* {{ .StartsAt.Format "15:04:05 UTC" }}
+{{ end }}
+
+{{ if eq .Status "firing" }}
+🔗 *Quick Actions:*
+• <http://grafana.gameforge.local:3000|Dashboard>
+• <http://jaeger.gameforge.local:16686|Tracing>
+• <http://prometheus.gameforge.local:9090|Metrics>
+{{ end }}
+{{ end }}
+
+{{/* MLflow template */}}
+{{ define "slack.mlflow.text" }}
+{{ if eq .Status "firing" }}🤖 *MLflow Alert*{{ else }}✅ *MLflow Resolved*{{ end }}
+
+{{ range .Alerts }}
+*Component:* {{ .Labels.service }}
+*Alert:* {{ .Annotations.summary }}
+*Model:* {{ if .Labels.model_name }}{{ .Labels.model_name }}{{ else }}Unknown{{ end }}
+*Stage:* {{ if .Labels.model_stage }}{{ .Labels.model_stage }}{{ else }}N/A{{ end }}
+*Version:* {{ if .Labels.model_version }}{{ .Labels.model_version }}{{ else }}N/A{{ end }}
+{{ if .Labels.experiment_id }}*Experiment:* {{ .Labels.experiment_id }}{{ end }}
+*Description:* {{ .Annotations.description }}
+*Instance:* {{ .Labels.instance }}
+{{ end }}
+
+{{ if eq .Status "firing" }}
+🔗 *MLflow Links:*
+• <http://mlflow.gameforge.local:5000|MLflow UI>
+• <http://registry.gameforge.local|Model Registry>
+{{ end }}
+{{ end }}
+
+{{/* Security alert template */}}
+{{ define "slack.security.text" }}
+🔒 *SECURITY INCIDENT DETECTED*
+
+{{ range .Alerts }}
+*Alert:* {{ .Annotations.summary }}
+*Description:* {{ .Annotations.description }}
+*Source:* {{ .Labels.instance }}
+*Severity:* {{ .Labels.severity }}
+{{ if .Labels.attack_type }}*Attack Type:* {{ .Labels.attack_type }}{{ end }}
+{{ if .Labels.source_ip }}*Source IP:* {{ .Labels.source_ip }}{{ end }}
+*Time:* {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+{{ end }}
+
+🚨 *IMMEDIATE INVESTIGATION REQUIRED* 🚨
+
+Security team should investigate this incident immediately.
+{{ end }}
+
+{{/* Infrastructure alert template */}}
+{{ define "email.infrastructure.body" }}
+GameForge Infrastructure Alert
+
+{{ range .Alerts }}
+Service: {{ .Labels.service }}
+Alert: {{ .Annotations.summary }}
+Description: {{ .Annotations.description }}
+Instance: {{ .Labels.instance }}
+Started: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+{{ if .Labels.filesystem }}Filesystem: {{ .Labels.filesystem }}{{ end }}
+{{ if .Labels.mountpoint }}Mount Point: {{ .Labels.mountpoint }}{{ end }}
+{{ end }}
+
+Please check the service status and resolve any issues.
+
+Dashboard: http://grafana.gameforge.local:3000
+Prometheus: http://prometheus.gameforge.local:9090
+{{ end }}
+
+{{/* PagerDuty incident description */}}
+{{ define "pagerduty.description" }}
+{{ .GroupLabels.alertname }} - {{ .GroupLabels.service }}
+{{ range .Alerts }}
+{{ .Annotations.summary }}
+{{ end }}
+{{ end }}
+
+{{/* Generic webhook payload */}}
+{{ define "webhook.payload" }}
+{
+  "alert_name": "{{ .GroupLabels.alertname }}",
+  "status": "{{ .Status }}",
+  "severity": "{{ .GroupLabels.severity }}",
+  "service": "{{ .GroupLabels.service }}",
+  "environment": "production",
+  "alerts": [
+    {{ range $index, $alert := .Alerts }}
+    {{ if $index }},{{ end }}
+    {
+      "summary": "{{ $alert.Annotations.summary }}",
+      "description": "{{ $alert.Annotations.description }}",
+      "instance": "{{ $alert.Labels.instance }}",
+      "started_at": "{{ $alert.StartsAt.Format "2006-01-02T15:04:05Z" }}",
+      "generator_url": "{{ $alert.GeneratorURL }}"
+    }
+    {{ end }}
+  ],
+  "dashboard_url": "http://grafana.gameforge.local:3000",
+  "runbook_url": "https://docs.gameforge.local/runbooks/alerts/{{ .GroupLabels.alertname }}"
+}
+{{ end }}
