@@ -1,43 +1,51 @@
-# GameForge - Enterprise ML Platform for Game Development
+# GameForge 2.0 - Enterprise AI Game Development Platform
 
-![GameForge Logo](https://img.shields.io/badge/GameForge-ML%20Platform-blue?style=for-the-badge&logo=gamepad)
+![GameForge 2.0 Logo](https://img.shields.io/badge/GameForge%202.0-AI%20Platform-blue?style=for-the-badge&logo=gamepad)
 
-[![Build Status](https://github.com/Sandmanmmm/GameForge/workflows/CI/badge.svg)](https://github.com/Sandmanmmm/GameForge/actions)
-[![Security](https://img.shields.io/badge/Security-Hardened-green?style=flat-square&logo=shield)](security/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)](docker/)
+[![Build Status](https://github.com/Sandmanmmm/GameForge-2.0/workflows/CI/badge.svg)](https://github.com/Sandmanmmm/GameForge-2.0/actions)
+[![Security](https://img.shields.io/badge/Security-Enterprise%20Grade-green?style=flat-square&logo=shield)](security/)
+[![Docker](https://img.shields.io/badge/Docker-Production%20Ready-blue?style=flat-square&logo=docker)](docker/)
+[![AI](https://img.shields.io/badge/AI-TorchServe%20%2B%20Ray-orange?style=flat-square&logo=pytorch)](ml-platform/)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
-> **Production-ready ML platform for game development with enterprise-grade security, scalability, and observability.**
+> **Enterprise-grade AI game development platform with advanced security, real-time AI integration, and production-ready cloud deployment.**
 
 ## 🎯 Overview
 
-GameForge is a comprehensive Machine Learning platform specifically designed for game development workflows. It provides enterprise-grade ML lifecycle management with advanced security, automated operations, and seamless integration capabilities.
+GameForge 2.0 is a revolutionary AI-powered game development platform that combines cutting-edge artificial intelligence with enterprise-grade security and production infrastructure. Built for modern game development teams, it provides everything needed to create, deploy, and scale AI-enhanced games.
 
 ### 🌟 Key Features
 
-- **🤖 Complete ML Lifecycle Management**: Model registry, training, deployment, and monitoring
-- **🎮 Game Development Optimized**: Specialized workflows for NPC behavior, procedural generation, and player analytics
-- **🔒 Security-First Architecture**: Multi-layered security with OPA policies, Seccomp profiles, and automated scanning
-- **📊 Advanced Analytics**: Data versioning, drift detection, and comprehensive observability
-- **🚀 Production Ready**: Hardened containers, auto-scaling, and enterprise deployment options
+- **🤖 Advanced AI Integration**: TorchServe + Ray cluster for production AI workloads with RTX 4090 optimization
+- **🎮 Intelligent Game Creation**: AI-powered asset generation, procedural content, and smart templates  
+- **🔒 Enterprise Security**: Multi-cloud KMS, mTLS, role-based access control, and frontend permission-aware UI
+- **📊 Complete Observability**: Prometheus, Grafana, distributed tracing, and real-time monitoring
+- **🚀 Cloud-Native**: Kubernetes-ready with Istio service mesh and one-click Vast.AI deployment
 
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        GameForge Platform                       │
+│                      GameForge 2.0 Platform                     │
 ├─────────────────────────────────────────────────────────────────┤
-│  🤖 ML Platform Core                  🔒 Security Framework     │
-│  ├─ Model Registry (MLflow)           ├─ OPA Policies           │
-│  ├─ Canary Deployments               ├─ Seccomp Profiles        │
-│  ├─ Dataset Versioning (DVC)         ├─ Vulnerability Scanning  │
-│  └─ Pipeline Orchestration           └─ Network Isolation       │
+│  🤖 AI Platform                       🎮 Game Development       │
+│  ├─ TorchServe Model Serving          ├─ Real-time Asset Gen    │
+│  ├─ Ray Distributed Computing         ├─ Smart Templates        │
+│  ├─ GPU-Optimized Inference           ├─ Collaboration Tools    │
+│  └─ MLOps Pipeline                    └─ Version Control        │
 ├─────────────────────────────────────────────────────────────────┤
-│  🐳 Infrastructure                    📊 Observability          │
-│  ├─ Docker Compose                   ├─ Prometheus Metrics      │
-│  ├─ Kubernetes Ready                 ├─ Grafana Dashboards      │
-│  ├─ Auto-scaling                     ├─ Distributed Logging     │
-│  └─ Load Balancing                   └─ Alert Management        │
+│  � Security Framework                📊 Observability          │
+│  ├─ Multi-Cloud KMS                  ├─ Prometheus + Grafana    │
+│  ├─ mTLS + Certificate Mgmt          ├─ Distributed Tracing     │
+│  ├─ RBAC + Permission UI             ├─ Real-time Alerts        │
+│  └─ Data Classification              └─ Custom Dashboards       │
+├─────────────────────────────────────────────────────────────────┤
+│  🐳 Cloud Infrastructure             🌐 Deployment Options      │
+│  ├─ Kubernetes + Istio               ├─ Local Development       │
+│  ├─ Docker Compose                   ├─ Production Hardened     │
+│  ├─ Auto-scaling                     ├─ Vast.AI RTX 4090        │
+│  └─ Service Mesh                     └─ Multi-Cloud Ready       │
+```
 └─────────────────────────────────────────────────────────────────┘
 ```
 
