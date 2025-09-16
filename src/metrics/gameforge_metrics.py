@@ -6,7 +6,6 @@
 import time
 import psutil
 from prometheus_client import Counter, Histogram, Gauge, Info, generate_latest
-from flask import Flask, Response
 import threading
 from functools import wraps
 
@@ -275,22 +274,59 @@ class GameForgeMetrics:
 # Global metrics instance
 metrics = GameForgeMetrics()
 
-# Flask app for metrics endpoint
-app = Flask(__name__)
+# Flask app for metrics endpoint (only create if running standalone)
+def create_metrics_app():
+    """Create Flask app for metrics - only when needed"""
+    from flask import Flask, Response
+    app = Flask(__name__)
 
-@app.route('/metrics')
-def prometheus_metrics():
-    """Prometheus metrics endpoint"""
-    return Response(generate_latest(), mimetype='text/plain')
+    @app.route('/metrics')
+    def prometheus_metrics():
+        """Prometheus metrics endpoint"""
+        return Response(generate_latest(), mimetype='text/plain')
 
-@app.route('/health')
-def health_check():
-    """Health check endpoint"""
+    @app.route('/health')
+    def health_check():
+        """Health check endpoint"""
+        return {'status': 'healthy', 'timestamp': time.time()}
+
+    @app.route('/metrics/gpu')
+    def gpu_metrics():
+        """GPU-specific metrics endpoint"""
+        gpu_data = {}
+        if metrics.gpu_available:
+            for i in range(metrics.gpu_count):
+                try:
+                    handle = nvml.nvmlDeviceGetHandleByIndex(i)
+                    name = nvml.nvmlDeviceGetName(handle).decode('utf-8')
+                    util = nvml.nvmlDeviceGetUtilizationRates(handle)
+                    mem_info = nvml.nvmlDeviceGetMemoryInfo(handle)
+                    
+                    gpu_data[f'gpu_{i}'] = {
+                        'name': name,
+                        'utilization': util.gpu,
+                        'memory_used': mem_info.used,
+                        'memory_total': mem_info.total,
+                        'memory_percent': (mem_info.used / mem_info.total) * 100
+                    }
+                except:
+                    pass
+        
+        return gpu_data
+    
+    return app
+
+# Metrics endpoint functions for FastAPI integration
+def get_prometheus_metrics():
+    """Get Prometheus metrics as string"""
+    return generate_latest()
+
+def get_health_status():
+    """Get health check status"""
     return {'status': 'healthy', 'timestamp': time.time()}
 
-@app.route('/metrics/gpu')
-def gpu_metrics():
-    """GPU-specific metrics endpoint"""
+def get_gpu_metrics():
+    """Get GPU metrics data"""
     gpu_data = {}
     if metrics.gpu_available:
         for i in range(metrics.gpu_count):
@@ -313,5 +349,6 @@ def gpu_metrics():
     return gpu_data
 
 if __name__ == '__main__':
-    # Run metrics server
+    # Run standalone metrics server
+    app = create_metrics_app()
     app.run(host='0.0.0.0', port=8080, debug=False)

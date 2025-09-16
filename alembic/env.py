@@ -12,7 +12,10 @@ from alembic import context
 
 # Add the project root to Python path
 project_root = Path(__file__).parent.parent
+# Add project root to path 
 sys.path.insert(0, str(project_root))
+# Add models path for external models directory
+sys.path.append(r"D:\models")
 
 # Import your models here for autogenerate support
 # Import from the production models package

@@ -9,6 +9,8 @@ from pathlib import Path
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+# Add models path for external models directory
+sys.path.append(r"D:\models")
 
 # Direct import without going through the problematic models package
 from gameforge.models.base import Base, User, Project, Asset, APIKey, AuditLog, UsageMetrics

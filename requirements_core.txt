@@ -1,0 +1,40 @@
+# Core dependencies without AI/ML packages
+pip==23.3.1
+setuptools==68.2.2
+wheel==0.41.3
+
+# Web Framework & API
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.2
+starlette==0.27.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+
+# HTTP Client Libraries
+httpx==0.25.2
+requests==2.31.0
+
+# Database & Storage
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+aiosqlite==0.21.0
+alembic==1.13.0
+redis==5.0.1
+
+# Background Processing
+celery==5.3.4
+kombu==5.3.4
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+cryptography==41.0.8
+PyJWT==2.8.0
+bleach==6.1.0
+authlib==1.2.1
+
+# Configuration & Utilities
+python-dotenv==1.0.0

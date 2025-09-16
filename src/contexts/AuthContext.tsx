@@ -36,6 +36,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (storedToken && storedUser) {
       setToken(storedToken);
       setUser(JSON.parse(storedUser));
+      // Set the token in the API service so it can make authenticated requests
+      AuthAPI.setToken(storedToken);
     }
   }, []);
 
@@ -47,6 +49,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(response.data.user);
         localStorage.setItem("token", response.data.token);
         localStorage.setItem("user", JSON.stringify(response.data.user));
+        // Update API service with the new token
+        AuthAPI.setToken(response.data.token);
       } else {
         throw new Error(response.error?.message || "Login failed");
       }
@@ -63,6 +67,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(response.data.user);
         localStorage.setItem("token", response.data.token);
         localStorage.setItem("user", JSON.stringify(response.data.user));
+        // Update API service with the new token
+        AuthAPI.setToken(response.data.token);
       } else {
         throw new Error(response.error?.message || "Registration failed");
       }
@@ -76,6 +82,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+    // Clear token from API service
+    AuthAPI.setToken(null);
   };
 
   const loginWithGitHub = () => {
@@ -93,6 +101,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(user);
     localStorage.setItem("token", token);
     localStorage.setItem("user", JSON.stringify(user));
+    // Update API service with the new token
+    AuthAPI.setToken(token);
   };
 
   const updateUserProfile = async (profileData: { name?: string }) => {

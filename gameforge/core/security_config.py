@@ -127,12 +127,14 @@ CORS_SETTINGS = {
         "https://api.gameforge.ai",
         # Frontend development servers
         "http://localhost:5173",
+        "http://localhost:5000",  # Added for current Vite dev server
         "http://localhost:3000",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5000",  # Added for current Vite dev server
         "http://127.0.0.1:3000"
         # Add your frontend domains here
     ],
-    "allow_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    "allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     "allow_headers": [
         "Authorization", "Content-Type", "X-Requested-With",
         "X-CSRF-Token", "X-API-Key"

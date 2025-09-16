@@ -189,8 +189,10 @@ def setup_security_middleware(app: FastAPI, settings) -> None:
     if settings.environment == "development":
         cors_origins.extend([
             "http://localhost:3000",
+            "http://localhost:5000",  # Added for current Vite dev server
             "http://localhost:8080",
             "http://127.0.0.1:3000",
+            "http://127.0.0.1:5000",  # Added for current Vite dev server
             "http://127.0.0.1:8080"
         ])
     
