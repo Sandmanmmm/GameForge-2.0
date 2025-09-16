@@ -1,0 +1,192 @@
+name: Backend CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'gameforge/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.github/workflows/backend-cicd.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'gameforge/**'
+      - 'requirements.txt'
+
+env:
+  PYTHON_VERSION: '3.11'
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}-backend
+
+jobs:
+  # Test and Security
+  test-and-security:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_gameforge
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-asyncio
+        
+    - name: Run linting
+      run: |
+        pip install flake8 black isort
+        flake8 gameforge/ --max-line-length=88 --extend-ignore=E203,W503
+        black --check gameforge/
+        isort --check-only gameforge/
+        
+    - name: Run security checks
+      run: |
+        pip install bandit safety
+        bandit -r gameforge/ -x '*/tests/*'
+        safety check
+        
+    - name: Run tests
+      run: |
+        pytest gameforge/tests/ --cov=gameforge --cov-report=xml
+      env:
+        DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_gameforge
+        JWT_SECRET_KEY: test_secret_key_for_ci
+        
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+
+  # Build Docker Image
+  build-docker:
+    needs: test-and-security
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.DOCKER_REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # Deploy to Staging
+  deploy-staging:
+    needs: [test-and-security, build-docker]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Deploy to staging server
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.STAGING_HOST }}
+        username: ${{ secrets.STAGING_USER }}
+        key: ${{ secrets.STAGING_SSH_KEY }}
+        script: |
+          docker pull ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:develop
+          docker-compose -f docker-compose.staging.yml up -d
+          
+    - name: Run staging health check
+      run: |
+        sleep 30
+        curl -f https://api-staging.gameforge.app/health || exit 1
+
+  # Deploy to Production
+  deploy-production:
+    needs: [test-and-security, build-docker]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Deploy to production servers
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.PRODUCTION_HOST }}
+        username: ${{ secrets.PRODUCTION_USER }}
+        key: ${{ secrets.PRODUCTION_SSH_KEY }}
+        script: |
+          # Blue-green deployment strategy
+          docker pull ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          
+          # Run database migrations
+          docker run --rm --network gameforge_network \
+            -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            alembic upgrade head
+            
+          # Update containers with zero downtime
+          docker-compose -f docker-compose.prod.yml up -d
+          
+    - name: Production health check
+      run: |
+        sleep 60
+        curl -f https://api.gameforge.app/health || exit 1
+        
+    - name: Notify monitoring systems
+      run: |
+        # Notify Sentry of deployment
+        curl -X POST \
+          https://sentry.io/api/0/organizations/${{ secrets.SENTRY_ORG }}/releases/ \
+          -H 'Authorization: Bearer ${{ secrets.SENTRY_AUTH_TOKEN }}' \
+          -H 'Content-Type: application/json' \
+          -d '{
+            "version": "${{ github.sha }}",
+            "projects": ["gameforge-backend"]
+          }'

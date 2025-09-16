@@ -327,8 +327,8 @@ services:
       GAMEFORGE_VARIANT: ${GAMEFORGE_VARIANT:-gpu}
       BUILD_VERSION: ${BUILD_VERSION:-latest}
       VCS_REF: ${VCS_REF:-}
-      # Database connections
-      DATABASE_URL: postgresql://gameforge:${POSTGRES_PASSWORD}@postgres:5432/gameforge_prod
+      # Database connections - CRITICAL: Connect to external GF_Database
+      DATABASE_URL: postgresql://gameforge_user:${POSTGRES_PASSWORD}@gf-database:5432/gameforge_dev
       REDIS_URL: redis://redis:6379/0
       ELASTICSEARCH_URL: http://elasticsearch:9200
       # Security keys
@@ -826,7 +826,8 @@ services:
         max_attempts: 3
     environment:
       <<: *common-env
-      DATABASE_URL: postgresql://gameforge:${POSTGRES_PASSWORD}@postgres:5432/gameforge_prod
+      # CRITICAL: Connect to external GF_Database instead of local postgres
+      DATABASE_URL: postgresql://gameforge_user:${POSTGRES_PASSWORD}@gf-database:5432/gameforge_dev
       REDIS_URL: redis://redis:6379/0
       ELASTICSEARCH_URL: http://elasticsearch:9200
       WORKER_TYPE: background
@@ -902,7 +903,8 @@ services:
       MODEL_CACHE_SIZE: "8G"
       BATCH_SIZE: ${INFERENCE_BATCH_SIZE:-4}
       MAX_SEQUENCE_LENGTH: ${MAX_SEQUENCE_LENGTH:-2048}
-      DATABASE_URL: postgresql://gameforge:${POSTGRES_PASSWORD}@postgres:5432/gameforge_prod
+      # CRITICAL: Connect to external GF_Database instead of local postgres
+      DATABASE_URL: postgresql://gameforge_user:${POSTGRES_PASSWORD}@gf-database:5432/gameforge_dev
       REDIS_URL: redis://redis:6379/3
       CELERY_BROKER_URL: redis://redis:6379/4
       CELERY_RESULT_BACKEND: redis://redis:6379/5
@@ -978,7 +980,8 @@ services:
       TRAINING_BATCH_SIZE: ${TRAINING_BATCH_SIZE:-8}
       GRADIENT_ACCUMULATION_STEPS: ${GRADIENT_ACCUMULATION_STEPS:-4}
       MIXED_PRECISION: ${MIXED_PRECISION:-fp16}
-      DATABASE_URL: postgresql://gameforge:${POSTGRES_PASSWORD}@postgres:5432/gameforge_prod
+      # CRITICAL: Connect to external GF_Database instead of local postgres
+      DATABASE_URL: postgresql://gameforge_user:${POSTGRES_PASSWORD}@gf-database:5432/gameforge_dev
       REDIS_URL: redis://redis:6379/6
       CELERY_BROKER_URL: redis://redis:6379/7
       CELERY_RESULT_BACKEND: redis://redis:6379/8

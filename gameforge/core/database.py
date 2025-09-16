@@ -63,11 +63,20 @@ class DatabaseManager:
             # Configure database URL for async operations
             db_url = self.settings.database_url
             
+            # CRITICAL: Only allow GF_Database PostgreSQL connections
+            postgres_prefixes = ("postgresql://", "postgresql+asyncpg://")
+            if not db_url.startswith(postgres_prefixes):
+                raise ValueError(
+                    f"Invalid database URL: {db_url}. "
+                    "Only PostgreSQL GF_Database connections allowed. "
+                    "Local databases not permitted."
+                )
+            
             # Convert sync PostgreSQL URL to async if needed
             if db_url.startswith("postgresql://"):
-                async_db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-            elif db_url.startswith("sqlite:///"):
-                async_db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+                async_db_url = db_url.replace(
+                    "postgresql://", "postgresql+asyncpg://", 1
+                )
             else:
                 async_db_url = db_url
             
@@ -77,23 +86,29 @@ class DatabaseManager:
                 echo=self.settings.debug,
                 pool_pre_ping=True,
                 pool_recycle=3600,  # Recycle connections every hour
-                pool_size=20 if not db_url.startswith("sqlite") else 1,
-                max_overflow=30 if not db_url.startswith("sqlite") else 0,
+                pool_size=20,  # GF_Database supports large connection pools
+                max_overflow=30,
                 connect_args={
                     "server_settings": {
                         "application_name": "gameforge_ai_platform",
                     }
-                } if not db_url.startswith("sqlite") else {}
+                }
             )
             
             # Create sync engine for migrations and admin tasks
+            if db_url.startswith("postgresql://"):
+                sync_db_url = db_url
+            else:
+                sync_db_url = db_url.replace(
+                    "postgresql+asyncpg://", "postgresql://", 1
+                )
             self._sync_engine = create_engine(
-                db_url,
+                sync_db_url,
                 echo=self.settings.debug,
                 pool_pre_ping=True,
                 pool_recycle=3600,
-                pool_size=10 if not db_url.startswith("sqlite") else 1,
-                max_overflow=20 if not db_url.startswith("sqlite") else 0
+                pool_size=10,
+                max_overflow=20
             )
             
             # Create session factories
