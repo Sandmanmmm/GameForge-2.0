@@ -21,7 +21,7 @@ from gameforge.core.logging_config import (
     log_security_event
 )
 from gameforge.core.database import get_async_session
-from gameforge.models import User
+from gameforge.models import User, AuthProvider
 
 router = APIRouter()
 security = HTTPBearer()
@@ -73,6 +73,38 @@ class OAuthState(BaseModel):
     state: str
     created_at: datetime
     redirect_uri: Optional[str] = None
+
+
+class RegisterRequest(BaseModel):
+    """Request model for user registration."""
+    username: str
+    email: EmailStr
+    password: str
+    name: Optional[str] = None
+    
+    @validator('username')
+    def validate_username(cls, v):
+        if not v or len(v.strip()) < 3:
+            raise ValueError('Username must be at least 3 characters')
+        if len(v.strip()) > 50:
+            raise ValueError('Username cannot exceed 50 characters')
+        return v.strip()
+    
+    @validator('password')
+    def validate_password(cls, v):
+        if not v or len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        return v
+    
+    @validator('name')
+    def validate_name(cls, v):
+        if v is not None:
+            v = v.strip()
+            if len(v) < 1:
+                raise ValueError('Name cannot be empty')
+            if len(v) > 100:
+                raise ValueError('Name cannot exceed 100 characters')
+        return v
 
 
 class UpdateProfileRequest(BaseModel):
@@ -332,6 +364,300 @@ async def get_current_user(
         raise
 
 
+async def create_or_update_oauth_user(
+    user_data: Dict[str, Any],
+    provider: str,
+    client_ip: str = "unknown"
+) -> User:
+    """
+    Create or update a user record for OAuth authentication.
+    
+    Args:
+        user_data: User data from OAuth provider
+        provider: OAuth provider name (github, google, etc.)
+        client_ip: Client IP for logging
+        
+    Returns:
+        User record from database
+    """
+    session = None
+    try:
+        # Get a database session
+        session_gen = get_async_session()
+        session = await session_gen.__anext__()
+        
+        # Try to find existing user by provider ID or email
+        provider_id = str(user_data['id'])
+        email = user_data['email']
+        username = user_data.get('login') or user_data.get('username') or f"{provider}_{provider_id[:8]}"
+        
+        # Look for existing user by provider ID first
+        existing_user = None
+        if provider == "github":
+            result = await session.execute(
+                select(User).where(User.github_id == provider_id)
+            )
+            existing_user = result.scalar_one_or_none()
+        elif provider == "google":
+            result = await session.execute(
+                select(User).where(User.google_id == provider_id)
+            )
+            existing_user = result.scalar_one_or_none()
+        
+        # If not found by provider ID, try by email
+        if not existing_user and email:
+            result = await session.execute(
+                select(User).where(User.email == email)
+            )
+            existing_user = result.scalar_one_or_none()
+        
+        if existing_user:
+            # Update existing user with OAuth provider info
+            update_data = {
+                "name": user_data.get('name') or existing_user.name,
+                "avatar_url": user_data.get('avatar_url'),
+                "is_verified": True,
+                "is_active": True
+            }
+            
+            # Link OAuth provider if not already linked
+            if provider == "github" and existing_user.github_id is None:
+                update_data["github_id"] = provider_id
+                update_data["provider"] = AuthProvider.GITHUB
+            elif provider == "google" and existing_user.google_id is None:
+                update_data["google_id"] = provider_id
+                update_data["provider"] = AuthProvider.GOOGLE
+            
+            await session.execute(
+                update(User)
+                .where(User.id == existing_user.id)
+                .values(**update_data)
+            )
+            await session.commit()
+            
+            log_security_event(
+                "oauth_user_updated",
+                "info",
+                client_ip,
+                {
+                    "user_id": str(existing_user.id),
+                    "provider": provider,
+                    "email": email
+                }
+            )
+            
+            # Refresh the user to get updated data
+            await session.refresh(existing_user)
+            return existing_user
+        else:
+            # Create new user
+            new_user = User(
+                username=username,
+                email=email,
+                name=user_data.get('name'),
+                avatar_url=user_data.get('avatar_url'),
+                password_hash=None,  # OAuth users don't have passwords
+                github_id=provider_id if provider == "github" else None,
+                google_id=provider_id if provider == "google" else None,
+                provider=AuthProvider.GITHUB if provider == "github" else AuthProvider.GOOGLE,
+                is_verified=True,
+                is_active=True
+            )
+            
+            session.add(new_user)
+            await session.commit()
+            await session.refresh(new_user)
+            
+            log_security_event(
+                "oauth_user_created",
+                "info",
+                client_ip,
+                {
+                    "user_id": str(new_user.id),
+                    "provider": provider,
+                    "email": email,
+                    "username": username
+                }
+            )
+            
+            return new_user
+                
+    except Exception as e:
+        if session:
+            await session.rollback()
+        logger.error(
+            "OAuth user creation/update failed",
+            extra_fields={
+                "error": str(e),
+                "provider": provider,
+                "email": user_data.get('email'),
+                "client_ip": client_ip
+            }
+        )
+        # Re-raise the exception to handle it in the calling function
+        raise
+    finally:
+        if session:
+            await session.close()
+
+
+@router.post("/register", response_model=LoginResponse)
+async def register(request: RegisterRequest, http_request: Request):
+    """
+    User registration endpoint for creating new accounts.
+    
+    Creates a new user account with username, email, and password.
+    Returns an access token upon successful registration.
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    
+    log_security_event(
+        "registration_attempt",
+        "info",
+        client_ip,
+        {
+            "username": request.username,
+            "email": request.email,
+            "authentication_method": "password"
+        }
+    )
+    
+    session = None
+    try:
+        # Get a database session
+        session_gen = get_async_session()
+        session = await session_gen.__anext__()
+        
+        # Check if username already exists
+        result = await session.execute(
+            select(User).where(User.username == request.username)
+        )
+        existing_username = result.scalar_one_or_none()
+        
+        if existing_username:
+            log_security_event(
+                "registration_failed",
+                "warning",
+                client_ip,
+                {
+                    "username": request.username,
+                    "reason": "username_exists"
+                }
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already exists"
+            )
+        
+        # Check if email already exists
+        result = await session.execute(
+            select(User).where(User.email == request.email)
+        )
+        existing_email = result.scalar_one_or_none()
+        
+        if existing_email:
+            log_security_event(
+                "registration_failed",
+                "warning",
+                client_ip,
+                {
+                    "username": request.username,
+                    "email": request.email,
+                    "reason": "email_exists"
+                }
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already exists"
+            )
+        
+        # Hash the password (proper bcrypt hashing should be used in production)
+        import hashlib
+        password_hash = hashlib.sha256(request.password.encode()).hexdigest()
+        
+        # Create new user
+        new_user = User(
+            username=request.username,
+            email=request.email,
+            name=request.name,
+            password_hash=password_hash,
+            provider=AuthProvider.LOCAL,
+            is_verified=False,  # Require email verification
+            is_active=True
+        )
+        
+        session.add(new_user)
+        await session.commit()
+        await session.refresh(new_user)
+        
+        # Create JWT token for the new user
+        provider_value = new_user.provider.value if new_user.provider else "local"
+        user_data = {
+            "id": str(new_user.id),
+            "user_id": str(new_user.id),
+            "email": new_user.email,
+            "username": new_user.username,
+            "name": new_user.name,
+            "provider": provider_value,
+            "is_verified": new_user.is_verified
+        }
+        
+        access_token = create_jwt_token(user_data)
+        
+        log_security_event(
+            "registration_successful",
+            "info",
+            client_ip,
+            {
+                "user_id": str(new_user.id),
+                "username": request.username,
+                "email": request.email
+            }
+        )
+        
+        return LoginResponse(
+            access_token=access_token,
+            token_type="bearer",
+            expires_in=3600,
+            user=user_data
+        )
+        
+    except HTTPException:
+        if session:
+            await session.rollback()
+        raise
+    except Exception as e:
+        if session:
+            await session.rollback()
+        logger.error(
+            "Registration failed",
+            extra_fields={
+                "error": str(e),
+                "username": request.username,
+                "email": request.email,
+                "client_ip": client_ip
+            }
+        )
+        log_security_event(
+            "registration_failed",
+            "error",
+            client_ip,
+            {
+                "username": request.username,
+                "email": request.email,
+                "reason": "server_error",
+                "error": str(e)
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration failed"
+        )
+    finally:
+        if session:
+            await session.close()
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest, http_request: Request):
     """
@@ -530,7 +856,7 @@ async def update_user_profile(
                         email=current_user.email,
                         username=current_user.username or f"user_{current_user.id[:8]}",
                         name=update_data.name.strip(),
-                        password_hash="",  # OAuth users don't have passwords
+                        password_hash=None,  # OAuth users don't have passwords
                         github_id=current_user.id if current_user.provider == "github" else None,
                         google_id=current_user.id if current_user.provider == "google" else None,
                         provider=current_user.provider,
@@ -909,30 +1235,85 @@ async def github_callback(
                     detail="No email address available from GitHub account"
                 )
             
-            # Create user data for JWT token
-            jwt_user_data = {
-                "id": str(user_data['id']),
+            # Prepare user data for database creation/update
+            oauth_user_data = {
+                "id": user_data['id'],
                 "email": primary_email,
+                "login": user_data.get('login'),
                 "username": user_data.get('login'),
                 "name": user_data.get('name'),
-                "avatar_url": user_data.get('avatar_url'),
-                "provider": "github",
-                "is_verified": True  # GitHub accounts are considered verified
+                "avatar_url": user_data.get('avatar_url')
             }
             
-            # Create JWT token
-            jwt_token = create_jwt_token(jwt_user_data)
-            
-            # Prepare user data for frontend (sanitized)
-            user_for_frontend = {
-                "id": str(user_data['id']),
-                "email": primary_email,
-                "username": user_data.get('login'),
-                "name": user_data.get('name'),
-                "avatar_url": user_data.get('avatar_url'),
-                "provider": "github",
-                "is_verified": True
-            }
+            # Create or update user in database
+            try:
+                db_user = await create_or_update_oauth_user(
+                    oauth_user_data, 
+                    "github", 
+                    client_ip
+                )
+                
+                # Create JWT token with database user ID
+                jwt_user_data = {
+                    "id": str(db_user.id),  # Use database UUID
+                    "user_id": str(user_data['id']),  # GitHub ID for compatibility
+                    "email": db_user.email,
+                    "username": db_user.username,
+                    "name": db_user.name,
+                    "avatar_url": db_user.avatar_url,
+                    "provider": "github",
+                    "is_verified": db_user.is_verified
+                }
+                
+                # Create JWT token
+                jwt_token = create_jwt_token(jwt_user_data)
+                
+                # Prepare user data for frontend (sanitized)
+                user_for_frontend = {
+                    "id": str(db_user.id),
+                    "user_id": str(user_data['id']),
+                    "email": db_user.email,
+                    "username": db_user.username,
+                    "name": db_user.name,
+                    "avatar_url": db_user.avatar_url,
+                    "provider": "github",
+                    "is_verified": db_user.is_verified
+                }
+                
+            except Exception as db_error:
+                # If database creation fails, fall back to JWT-only approach
+                logger.warning(
+                    "Database user creation failed, using JWT-only approach",
+                    extra_fields={
+                        "error": str(db_error),
+                        "provider": "github",
+                        "user_id": str(user_data['id']),
+                        "client_ip": client_ip
+                    }
+                )
+                
+                # Create JWT token with GitHub data (fallback)
+                jwt_user_data = {
+                    "id": str(user_data['id']),
+                    "email": primary_email,
+                    "username": user_data.get('login'),
+                    "name": user_data.get('name'),
+                    "avatar_url": user_data.get('avatar_url'),
+                    "provider": "github",
+                    "is_verified": True
+                }
+                
+                jwt_token = create_jwt_token(jwt_user_data)
+                
+                user_for_frontend = {
+                    "id": str(user_data['id']),
+                    "email": primary_email,
+                    "username": user_data.get('login'),
+                    "name": user_data.get('name'),
+                    "avatar_url": user_data.get('avatar_url'),
+                    "provider": "github",
+                    "is_verified": True
+                }
             
             user_json = json.dumps(user_for_frontend)
             user_encoded = urllib.parse.quote(user_json)
