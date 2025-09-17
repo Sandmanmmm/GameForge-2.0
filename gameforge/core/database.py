@@ -63,14 +63,15 @@ class DatabaseManager:
             # Configure database URL for async operations
             db_url = self.settings.database_url
             
-            # CRITICAL: Only allow GF_Database PostgreSQL connections
+            # For development, allow local PostgreSQL connections
             postgres_prefixes = ("postgresql://", "postgresql+asyncpg://")
             if not db_url.startswith(postgres_prefixes):
                 raise ValueError(
                     f"Invalid database URL: {db_url}. "
-                    "Only PostgreSQL GF_Database connections allowed. "
-                    "Local databases not permitted."
+                    "Only PostgreSQL connections allowed."
                 )
+            
+            logger.info(f"🔗 Connecting to database: {db_url.split('@')[0]}@***")
             
             # Convert sync PostgreSQL URL to async if needed
             if db_url.startswith("postgresql://"):

@@ -1,6 +1,6 @@
 """
 Alembic environment configuration for GameForge.
-CRITICAL: Uses external GF_Database PostgreSQL only - no local database.
+Production-ready database migrations with comprehensive model support.
 """
 import sys
 from pathlib import Path
@@ -12,12 +12,14 @@ from alembic import context
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# CRITICAL: No local models - all data is handled by external GF_Database
-# Import base for metadata only (models are in GF_Database)
+# Import base and all models for migration detection
 try:
     from gameforge.core.base import Base
-except ImportError:
-    # If base cannot be imported, create minimal Base
+    # Import all models to ensure they're detected by autogenerate
+    from gameforge.models import *  # This imports all models
+except ImportError as e:
+    print(f"Warning: Could not import models: {e}")
+    # If models cannot be imported, create minimal Base
     from sqlalchemy.ext.declarative import declarative_base
     Base = declarative_base()
 

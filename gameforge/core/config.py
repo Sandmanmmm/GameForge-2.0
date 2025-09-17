@@ -103,17 +103,32 @@ class Settings:
     def database_url(self):
         """Lazily load database URL from Vault or environment."""
         if 'database_url' not in self._secrets_cache:
-            # Force GF_Database connection - no SQLite fallback allowed
-            gf_database_url = (
-                "postgresql+asyncpg://gameforge_user:your_password@"
-                "localhost:5432/gameforge_dev"
-            )
-            self._secrets_cache['database_url'] = self._get_secret_or_env(
-                "secrets/database",
-                "connection_string",
-                "DATABASE_URL",
-                gf_database_url
-            )
+            # Check for development database environment variables first
+            dev_host = os.getenv("DEV_DB_HOST")
+            dev_port = os.getenv("DEV_DB_PORT", "5432")
+            dev_name = os.getenv("DEV_DB_NAME")
+            dev_user = os.getenv("DEV_DB_USER")
+            dev_password = os.getenv("DEV_DB_PASSWORD")
+            
+            if all([dev_host, dev_name, dev_user, dev_password]):
+                # Use development database configuration
+                dev_database_url = (
+                    f"postgresql+asyncpg://{dev_user}:{dev_password}@"
+                    f"{dev_host}:{dev_port}/{dev_name}"
+                )
+                self._secrets_cache['database_url'] = dev_database_url
+            else:
+                # Fall back to Vault or default configuration
+                gf_database_url = (
+                    "postgresql+asyncpg://gameforge_user:your_password@"
+                    "localhost:5432/gameforge_dev"
+                )
+                self._secrets_cache['database_url'] = self._get_secret_or_env(
+                    "secrets/database",
+                    "connection_string",
+                    "DATABASE_URL",
+                    gf_database_url
+                )
         return self._secrets_cache['database_url']
     
     @property
