@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 
 from .auth import get_current_user, UserData
-from .project_storage import project_storage
+from .project_storage_legacy import project_storage
 
 
 router = APIRouter()

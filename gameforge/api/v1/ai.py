@@ -16,7 +16,7 @@ from fastapi import (
 from pydantic import BaseModel, Field, validator, root_validator
 import logging
 
-from .project_storage import project_storage
+from .project_storage_legacy import project_storage
 
 # Import metrics system, structured logging, and auth validation
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))

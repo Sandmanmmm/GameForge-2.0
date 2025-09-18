@@ -27,6 +27,10 @@ from gameforge.core.config import get_settings
 from gameforge.core.logging_config import get_structured_logger
 from gameforge.core.base import Base  # Import Base from separate module
 
+# Import all models to ensure they're registered with SQLAlchemy
+# This is critical for proper schema creation and relationships
+from gameforge.models import *  # Import all 44 tables
+
 logger = get_structured_logger(__name__)
 
 # Naming convention for database constraints

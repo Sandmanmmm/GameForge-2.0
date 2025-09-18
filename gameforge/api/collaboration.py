@@ -17,11 +17,12 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
-from gameforge.core.database import get_db
+from gameforge.core.database import get_async_session
 from gameforge.models.collaboration import (
-    ProjectRole, ActivityType, NotificationType, InviteStatus,
-    Project, ProjectCollaboration, ProjectInvite, ActivityLog, Comment, Notification
+    CollaborationRole, ActivityType, NotificationType, InviteStatus,
+    ProjectCollaboration, ProjectInvite, ActivityLog, Comment, Notification
 )
+from gameforge.models.projects import Project
 from gameforge.services.collaboration import (
     CollaborationService, CommentService, NotificationService
 )
@@ -33,20 +34,20 @@ from gameforge.core.logging_config import get_structured_logger
 logger = get_structured_logger(__name__)
 
 # Create router
-collaboration_router = APIRouter(prefix="/api/v1/collaboration", tags=["collaboration"])
+collaboration_router = APIRouter(prefix="/collaboration", tags=["collaboration"])
 
 
 # Pydantic Models for API Requests/Responses
 class ProjectCollaborationCreate(BaseModel):
     """Request model for adding collaborators."""
     email: str = Field(..., description="Email of user to invite")
-    role: ProjectRole = Field(..., description="Role to assign")
+    role: CollaborationRole = Field(..., description="Role to assign")
     custom_message: Optional[str] = Field(None, description="Custom invitation message")
 
 
 class ProjectCollaborationUpdate(BaseModel):
     """Request model for updating collaborator roles."""
-    role: ProjectRole = Field(..., description="New role to assign")
+    role: CollaborationRole = Field(..., description="New role to assign")
 
 
 class CommentCreate(BaseModel):
@@ -118,7 +119,7 @@ class ProjectCollaborationResponse(BaseModel):
     id: str
     user_id: str
     project_id: str
-    role: ProjectRole
+    role: CollaborationRole
     joined_at: datetime
 
     class Config:
@@ -130,7 +131,7 @@ class ProjectInviteResponse(BaseModel):
     id: str
     project_id: str
     email: str
-    role: ProjectRole
+    role: CollaborationRole
     status: InviteStatus
     invited_by: str
     custom_message: Optional[str]
@@ -145,7 +146,7 @@ class ProjectInviteResponse(BaseModel):
 async def get_current_user_id() -> str:
     """Get current authenticated user ID."""
     # TODO: Integrate with actual authentication system
-    return "user_123"  # Placeholder
+    return "550e8400-e29b-41d4-a716-446655440000"  # Placeholder UUID
 
 
 # Project Collaboration Endpoints
@@ -153,7 +154,7 @@ async def get_current_user_id() -> str:
 async def get_project_collaborators(
     project_id: str = Path(..., description="Project ID"),
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Get all collaborators for a project."""
     service = CollaborationService(db)
@@ -174,13 +175,13 @@ async def invite_collaborator(
     project_id: str = Path(..., description="Project ID"),
     request: ProjectCollaborationCreate = ...,
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Invite a new collaborator to a project."""
     service = CollaborationService(db)
     
     # Check if user can invite others (must be owner or admin)
-    if not await service.check_collaboration_permission(project_id, current_user_id, [ProjectRole.OWNER, ProjectRole.ADMIN]):
+    if not await service.check_collaboration_permission(project_id, current_user_id, [CollaborationRole.OWNER, CollaborationRole.ADMIN]):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions to invite collaborators"
@@ -219,13 +220,13 @@ async def update_collaborator_role(
     user_id: str = Path(..., description="User ID of collaborator"),
     request: ProjectCollaborationUpdate = ...,
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Update a collaborator's role."""
     service = CollaborationService(db)
     
     # Check permissions
-    if not await service.check_collaboration_permission(project_id, current_user_id, [ProjectRole.OWNER, ProjectRole.ADMIN]):
+    if not await service.check_collaboration_permission(project_id, current_user_id, [CollaborationRole.OWNER, CollaborationRole.ADMIN]):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions to update collaborator roles"
@@ -262,7 +263,7 @@ async def remove_collaborator(
     project_id: str = Path(..., description="Project ID"),
     user_id: str = Path(..., description="User ID of collaborator"),
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Remove a collaborator from a project."""
     service = CollaborationService(db)
@@ -272,8 +273,8 @@ async def remove_collaborator(
     target_role = await service.get_user_role(project_id, user_id)
     
     can_remove = (
-        user_role == ProjectRole.OWNER or
-        (user_role == ProjectRole.ADMIN and target_role != ProjectRole.OWNER) or
+        user_role == CollaborationRole.OWNER or
+        (user_role == CollaborationRole.ADMIN and target_role != CollaborationRole.OWNER) or
         current_user_id == user_id
     )
     
@@ -308,7 +309,7 @@ async def remove_collaborator(
 @collaboration_router.get("/invites", response_model=List[ProjectInviteResponse])
 async def get_user_invites(
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Get all pending invites for the current user."""
     service = CollaborationService(db)
@@ -324,7 +325,7 @@ async def get_user_invites(
 async def accept_invite(
     invite_id: str = Path(..., description="Invite ID"),
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Accept a project invitation."""
     service = CollaborationService(db)
@@ -353,7 +354,7 @@ async def accept_invite(
 async def decline_invite(
     invite_id: str = Path(..., description="Invite ID"),
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Decline a project invitation."""
     service = CollaborationService(db)
@@ -376,7 +377,7 @@ async def get_project_activity(
     limit: int = Query(50, ge=1, le=100, description="Number of activities to return"),
     offset: int = Query(0, ge=0, description="Number of activities to skip"),
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Get activity feed for a project."""
     service = CollaborationService(db)
@@ -401,7 +402,7 @@ async def get_project_comments(
     limit: int = Query(50, ge=1, le=100, description="Number of comments to return"),
     offset: int = Query(0, ge=0, description="Number of comments to skip"),
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Get comments for a project or specific entity."""
     collaboration_service = CollaborationService(db)
@@ -429,7 +430,7 @@ async def create_comment(
     project_id: str = Path(..., description="Project ID"),
     request: CommentCreate = ...,
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Create a new comment."""
     collaboration_service = CollaborationService(db)
@@ -471,7 +472,7 @@ async def update_comment(
     comment_id: str = Path(..., description="Comment ID"),
     request: CommentUpdate = ...,
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Update a comment."""
     comment_service = CommentService(db)
@@ -495,7 +496,7 @@ async def update_comment(
 async def delete_comment(
     comment_id: str = Path(..., description="Comment ID"),
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Delete a comment."""
     comment_service = CommentService(db)
@@ -518,7 +519,7 @@ async def get_notifications(
     offset: int = Query(0, ge=0, description="Number of notifications to skip"),
     unread_only: bool = Query(False, description="Show only unread notifications"),
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Get notifications for the current user."""
     service = NotificationService(db)
@@ -537,7 +538,7 @@ async def update_notification(
     notification_id: str = Path(..., description="Notification ID"),
     request: NotificationUpdate = ...,
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Update a notification (mark as read/unread)."""
     service = NotificationService(db)
@@ -560,7 +561,7 @@ async def update_notification(
 @collaboration_router.post("/notifications/mark-all-read")
 async def mark_all_notifications_read(
     current_user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """Mark all notifications as read for the current user."""
     service = NotificationService(db)
@@ -575,7 +576,7 @@ async def websocket_endpoint(
     websocket: WebSocket,
     project_id: str = Path(..., description="Project ID"),
     user_id: str = Query(..., description="User ID"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_session)
 ):
     """WebSocket endpoint for real-time collaboration."""
     collaboration_service = CollaborationService(db)

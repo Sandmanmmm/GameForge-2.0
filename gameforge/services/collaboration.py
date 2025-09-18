@@ -20,9 +20,10 @@ from email.mime.multipart import MIMEMultipart
 import smtplib
 
 from gameforge.models.collaboration import (
-    Project, ProjectCollaboration, ProjectInvite, ActivityLog, Comment, 
+    ProjectCollaboration, ProjectInvite, ActivityLog, Comment, 
     Notification, CollaborationRole, InviteStatus, ActivityType, NotificationType
 )
+from gameforge.models.projects import Project
 from gameforge.core.logging_config import get_structured_logger, log_security_event
 
 logger = get_structured_logger(__name__)
@@ -57,6 +58,7 @@ class CollaborationService:
         
         self.db.add(project)
         await self.db.flush()  # Get the project ID
+        await self.db.refresh(project)  # Ensure attributes are available
         
         # Log project creation
         await self.log_activity(
