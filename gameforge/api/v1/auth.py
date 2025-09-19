@@ -14,7 +14,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, validator
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import update, select
+from sqlalchemy import update, select, and_
 from gameforge.core.config import get_settings
 from gameforge.core.logging_config import (
     get_structured_logger,
@@ -59,12 +59,11 @@ class LoginResponse(BaseModel):
 class UserData(BaseModel):
     """User data extracted from JWT token."""
     id: str
-    user_id: str  # For backward compatibility
     email: EmailStr
     username: Optional[str] = None
-    name: Optional[str] = None
+    full_name: Optional[str] = None  # Changed from 'name' to match database
     avatar_url: Optional[str] = None
-    provider: Optional[str] = None
+    auth_provider: Optional[str] = None  # Changed from 'provider' to match database
     is_verified: bool = False
 
 
@@ -110,6 +109,7 @@ class RegisterRequest(BaseModel):
 class UpdateProfileRequest(BaseModel):
     """Request model for updating user profile."""
     name: Optional[str] = None
+    username: Optional[str] = None
     
     @validator('name')
     def validate_name(cls, v):
@@ -119,6 +119,20 @@ class UpdateProfileRequest(BaseModel):
                 raise ValueError('Name cannot be empty')
             if len(v) > 100:
                 raise ValueError('Name cannot exceed 100 characters')
+        return v
+    
+    @validator('username')
+    def validate_username(cls, v):
+        if v is not None:
+            v = v.strip()
+            if len(v) < 3:
+                raise ValueError('Username must be at least 3 characters')
+            if len(v) > 50:
+                raise ValueError('Username cannot exceed 50 characters')
+            # Check for valid username format (alphanumeric and underscores only)
+            import re
+            if not re.match(r'^[a-zA-Z0-9_]+$', v):
+                raise ValueError('Username can only contain letters, numbers, and underscores')
         return v
 
 
@@ -248,12 +262,11 @@ def verify_jwt_token(token: str) -> UserData:
         
         user_data = UserData(
             id=user_id,
-            user_id=user_id,  # For backward compatibility
             email=email,
             username=payload.get("username"),
-            name=payload.get("name"),
+            full_name=payload.get("full_name"),
             avatar_url=payload.get("avatar_url"),
-            provider=payload.get("provider", "local"),
+            auth_provider=payload.get("auth_provider", "local"),
             is_verified=payload.get("is_verified", False)
         )
         
@@ -262,7 +275,7 @@ def verify_jwt_token(token: str) -> UserData:
             "info",
             {
                 "user_id": user_id,
-                "provider": user_data.provider
+                "provider": user_data.auth_provider
             }
         )
         
@@ -346,7 +359,7 @@ async def get_current_user(
                 "user_id": user_data.id,
                 "client_ip": client_ip,
                 "user_agent": user_agent,
-                "provider": user_data.provider
+                "provider": user_data.auth_provider
             }
         )
         
@@ -414,7 +427,7 @@ async def create_or_update_oauth_user(
         if existing_user:
             # Update existing user with OAuth provider info
             update_data = {
-                "name": user_data.get('name') or existing_user.name,
+                "full_name": user_data.get('name') or existing_user.full_name,
                 "avatar_url": user_data.get('avatar_url'),
                 "is_verified": True,
                 "is_active": True
@@ -579,9 +592,9 @@ async def register(request: RegisterRequest, http_request: Request):
         new_user = User(
             username=request.username,
             email=request.email,
-            name=request.name,
+            full_name=request.name,
             password_hash=password_hash,
-            provider=AuthProvider.LOCAL,
+            auth_provider=AuthProvider.LOCAL,
             is_verified=False,  # Require email verification
             is_active=True
         )
@@ -591,14 +604,13 @@ async def register(request: RegisterRequest, http_request: Request):
         await session.refresh(new_user)
         
         # Create JWT token for the new user
-        provider_value = new_user.provider.value if new_user.provider else "local"
+        provider_value = "local"  # For registered users, always local
         user_data = {
             "id": str(new_user.id),
-            "user_id": str(new_user.id),
             "email": new_user.email,
             "username": new_user.username,
-            "name": new_user.name,
-            "provider": provider_value,
+            "full_name": new_user.full_name,
+            "auth_provider": provider_value,
             "is_verified": new_user.is_verified
         }
         
@@ -774,12 +786,11 @@ async def get_current_user_info(
     """Get current user information."""
     return {
         "id": current_user.id,
-        "user_id": current_user.user_id,
         "email": current_user.email,
         "username": current_user.username,
-        "name": current_user.name,
+        "full_name": current_user.full_name,
         "avatar_url": current_user.avatar_url,
-        "provider": current_user.provider,
+        "auth_provider": current_user.auth_provider,
         "is_verified": current_user.is_verified
     }
 
@@ -799,7 +810,7 @@ async def update_user_profile(
     
     # Debug logging
     print(f"🔍 DEBUG: Profile update request received")
-    print(f"🔍 DEBUG: Current user: {current_user.id}, {current_user.name}")
+    print(f"🔍 DEBUG: Current user: {current_user.id}, {current_user.full_name}")
     print(f"🔍 DEBUG: Update data: {update_data.dict()}")
     print(f"🔍 DEBUG: Client IP: {client_ip}")
     
@@ -812,18 +823,32 @@ async def update_user_profile(
     )
     
     try:
-        # For now, just update the JWT token without database persistence
-        # This will allow profile updates to work even without a database connection
+        # Check username uniqueness if username is being updated
+        if update_data.username is not None and update_data.username != current_user.username:
+            if session:
+                # Check if username already exists
+                existing_username = await session.execute(
+                    select(User).where(
+                        and_(
+                            User.username == update_data.username.strip(),
+                            User.id != current_user.id  # Don't conflict with self
+                        )
+                    )
+                )
+                if existing_username.scalar_one_or_none():
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Username already exists"
+                    )
         
         # Create updated user data with the new information
         updated_user_data = {
             "id": current_user.id,
-            "user_id": current_user.user_id,
             "email": current_user.email,
-            "username": current_user.username,
-            "name": update_data.name if update_data.name is not None else current_user.name,
+            "username": update_data.username.strip() if update_data.username is not None else current_user.username,
+            "full_name": update_data.name if update_data.name is not None else current_user.full_name,
             "avatar_url": current_user.avatar_url,
-            "provider": current_user.provider,
+            "auth_provider": current_user.auth_provider,
             "is_verified": current_user.is_verified
         }
         
@@ -831,7 +856,7 @@ async def update_user_profile(
         new_token = create_jwt_token(updated_user_data)
         
         # Try to update database if available, but don't fail if database is unavailable
-        if session and update_data.name is not None:
+        if session and (update_data.name is not None or update_data.username is not None):
             try:
                 # For OAuth users, we might need to create the record if it doesn't exist
                 # First, try to find existing user
@@ -841,28 +866,34 @@ async def update_user_profile(
                 user_record = existing_user.scalar_one_or_none()
                 
                 if user_record:
+                    # Prepare update values
+                    update_values = {}
+                    if update_data.name is not None:
+                        update_values["full_name"] = update_data.name.strip()  # Use correct DB field name
+                    if update_data.username is not None:
+                        update_values["username"] = update_data.username.strip()
+                    
                     # Update existing user
-                    result = await session.execute(
-                        update(User)
-                        .where(User.id == current_user.id)
-                        .values(name=update_data.name.strip())
-                    )
-                    await session.commit()
+                    if update_values:
+                        result = await session.execute(
+                            update(User)
+                            .where(User.id == current_user.id)
+                            .values(**update_values)
+                        )
+                        await session.commit()
                 else:
                     # Create new user record for OAuth users
                     new_user = User(
                         id=current_user.id,
-                        user_id=current_user.user_id,
                         email=current_user.email,
-                        username=current_user.username or f"user_{current_user.id[:8]}",
-                        name=update_data.name.strip(),
+                        username=update_data.username.strip() if update_data.username is not None else (current_user.username or f"user_{current_user.id[:8]}"),
+                        full_name=update_data.name.strip() if update_data.name is not None else current_user.full_name,
                         password_hash=None,  # OAuth users don't have passwords
-                        github_id=current_user.id if current_user.provider == "github" else None,
-                        google_id=current_user.id if current_user.provider == "google" else None,
-                        provider=current_user.provider,
+                        github_id=current_user.id if current_user.auth_provider == "github" else None,
+                        google_id=current_user.id if current_user.auth_provider == "google" else None,
+                        auth_provider=AuthProvider.GITHUB if current_user.auth_provider == "github" else AuthProvider.GOOGLE if current_user.auth_provider == "google" else AuthProvider.LOCAL,
                         avatar_url=current_user.avatar_url,
-                        is_verified=current_user.is_verified,
-                        is_active=True
+                        is_verified=current_user.is_verified
                     )
                     session.add(new_user)
                     await session.commit()
@@ -872,7 +903,7 @@ async def update_user_profile(
                         user_id=current_user.id,
                         ip_address=client_ip,
                         severity="info",
-                        provider=current_user.provider
+                        auth_provider=current_user.auth_provider
                     )
             except Exception as db_error:
                 # Log database error but continue with JWT token update

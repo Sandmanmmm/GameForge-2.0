@@ -7,5 +7,7 @@
 			"path": "../../models"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"powershell.cwd": "GameForge-2.0"
+	}
 }
